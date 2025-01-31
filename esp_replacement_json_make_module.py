@@ -135,7 +135,7 @@ def insert_br_at_third_width(text, char_widths_dict: Dict[str, int] ) -> str:
 # 4) 出力フォーマット (HTML/括弧形式等)
 # ================================
 # ユーザーが選択した出力形式を出力するための関数
-def output_format(main_text, ruby_content, format_type):
+def output_format(main_text, ruby_content, format_type, char_widths_dict):
     if format_type == 'HTML格式_Ruby文字_大小调整':
         width_ruby = measure_text_width_Arial16(ruby_content, char_widths_dict)
         width_main = measure_text_width_Arial16(main_text, char_widths_dict)
