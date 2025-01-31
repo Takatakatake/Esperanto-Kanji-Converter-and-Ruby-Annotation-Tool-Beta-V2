@@ -135,26 +135,26 @@ def insert_br_at_third_width(text, char_widths_dict: Dict[str, int] ) -> str:
 # 4) 出力フォーマット (HTML/括弧形式等)
 # ================================
 # ユーザーが選択した出力形式を出力するための関数
-def output_format(main_text, ruby_content, format_type, char_widths_dict):
+def output_format(main_text, ruby_content, format_type):
     if format_type == 'HTML格式_Ruby文字_大小调整':
         width_ruby = measure_text_width_Arial16(ruby_content, char_widths_dict)
         width_main = measure_text_width_Arial16(main_text, char_widths_dict)
         ratio_1 = width_ruby / width_main
-        # main_text(親要素)とruby_content(ルビ)の文字幅の比率に応じて、ルビサイズを7段階に分ける。
+        # main_text(親要素)とruby_content(ルビ)の文字幅の比率に応じて、ルビサイズを8段階に分ける。
         # "や'などの特殊文字については、jsonモジュールが自動的にエスケープして、正しく処理してくれるので心配無用。
         if ratio_1 > 6 :# 親要素に対してルビが大きすぎる場合は、ルビ内で改行するため、関数'insert_br_at_third_width'によって適切な位置に'<br>'を2つ挿入。
             return '<ruby>{}<rt class="ruby-XXXS_S">{}</rt></ruby>'.format(main_text, insert_br_at_third_width(ruby_content, char_widths_dict))
-        elif ratio_1>(10/3):# 親要素に対してルビが大きい場合は、ルビ内で改行するため、関数'insert_br_at_half_width'によって適切な位置に'<br>'を挿入。
+        elif ratio_1>(9/3):# 親要素に対してルビが大きい場合は、ルビ内で改行するため、関数'insert_br_at_half_width'によって適切な位置に'<br>'を挿入。
             return '<ruby>{}<rt class="ruby-XXS_S">{}</rt></ruby>'.format(main_text, insert_br_at_half_width(ruby_content, char_widths_dict))
-        elif ratio_1>(10/4):
+        elif ratio_1>(9/4):
             return '<ruby>{}<rt class="ruby-XS_S">{}</rt></ruby>'.format(main_text, ruby_content)
-        elif  ratio_1>(10/5):
+        elif  ratio_1>(9/5):
             return '<ruby>{}<rt class="ruby-S_S">{}</rt></ruby>'.format(main_text, ruby_content)
-        elif  ratio_1>(10/6):
+        elif  ratio_1>(9/6):
             return '<ruby>{}<rt class="ruby-M_M">{}</rt></ruby>'.format(main_text, ruby_content)
-        elif  ratio_1>(10/7):
+        elif  ratio_1>(9/7):
             return '<ruby>{}<rt class="ruby-L_L">{}</rt></ruby>'.format(main_text, ruby_content)
-        elif  ratio_1>(10/8):
+        elif  ratio_1>(9/8):
             return '<ruby>{}<rt class="ruby-XL_L">{}</rt></ruby>'.format(main_text, ruby_content)
         else:
             return '<ruby>{}<rt class="ruby-XXL_L">{}</rt></ruby>'.format(main_text, ruby_content)
@@ -165,17 +165,17 @@ def output_format(main_text, ruby_content, format_type, char_widths_dict):
         
         if ratio_2 > 6 :
             return '<ruby>{}<rt class="ruby-XXXS_S">{}</rt></ruby>'.format(ruby_content, insert_br_at_third_width(main_text, char_widths_dict))
-        elif ratio_2>(10/3):
+        elif ratio_2>(9/3):
             return '<ruby>{}<rt class="ruby-XXS_S">{}</rt></ruby>'.format(ruby_content, insert_br_at_half_width(main_text, char_widths_dict))
-        elif ratio_2>(10/4):# ruby_content(親要素)とmain_text(ルビ)の文字幅の比率に応じて、ルビサイズを6段階に分ける。
-            return '<ruby>{}<rt class="ruby-XS_S">{}</rt></ruby>'.format(ruby_content, main_text)# "や'などの特殊文字については、jsonモジュールが自動的にエスケープして、正しく処理してくれるので心配無用。
-        elif  ratio_2>(10/5):
+        elif ratio_2>(9/4):
+            return '<ruby>{}<rt class="ruby-XS_S">{}</rt></ruby>'.format(ruby_content, main_text)
+        elif  ratio_2>(9/5):
             return '<ruby>{}<rt class="ruby-S_S">{}</rt></ruby>'.format(ruby_content, main_text)
-        elif  ratio_2>(10/6):
+        elif  ratio_2>(9/6):
             return '<ruby>{}<rt class="ruby-M_M">{}</rt></ruby>'.format(ruby_content, main_text)
-        elif  ratio_2>(10/7):
+        elif  ratio_2>(9/7):
             return '<ruby>{}<rt class="ruby-L_L">{}</rt></ruby>'.format(ruby_content, main_text)
-        elif  ratio_2>(10/8):
+        elif  ratio_2>(9/8):
             return '<ruby>{}<rt class="ruby-XL_L">{}</rt></ruby>'.format(ruby_content, main_text)
         else:
             return '<ruby>{}<rt class="ruby-XXL_L">{}</rt></ruby>'.format(ruby_content, main_text)

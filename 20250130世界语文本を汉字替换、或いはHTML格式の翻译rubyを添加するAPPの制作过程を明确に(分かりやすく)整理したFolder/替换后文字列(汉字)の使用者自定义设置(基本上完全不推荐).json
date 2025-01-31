@@ -1,16 +1,9 @@
 [["替换后文字列(汉字)の使用者自定义设置方法の说明",
-"小文字,字上符形式で統一"],
-["ili/n", "dflt", []],
-["geum/o", "dflt", []],
-["ge/um/", "dflt", ["ne", "verbo_s1", "verbo_s2"],"gee/uumm"],
-["plat/a/n", "dflt", []],
-["platan", "dflt", ["ne", "o","a"],"pulaton"],
-["princip/e", "dflt", [],"purinchi/pee"],
-["principe", "dflt", ["ne", "o","a"]],
-["val/o/n", "dflt", []],
-["valon", "dflt", ["o","a"]],
-["ĉen/a/j", "dflt", ["o","a"],"che/na/wii/ii"],
-["mis", "dflt", ["verbo_s1", "verbo_s2"]],
-["misi", "dflt", ["o","a"]],
-["far/iĝ/", 87500, []]
+"3つ目の要素までは、❛世界语单词词根分解方法の使用者自定义设置JSON❜と全く同じです。",
+"4つめの要素でユーザー独自の置換後文字列を割り当てます。",
+"但し、❛/❜による分割の数を元の単語と一致させるようにしてください",
+"❛/❜による分割数が一致いないと、置換リストへの読み込みはされません。"],
+["abb/re/vi/a/ti/on/", "dflt", ["あぶ/り/び/えい/し/おん/"]],
+["/ad/van/ta/ge/ou/s/", "dflt", ["ne", "verbo_s1", "verbo_s2"],"/あど/ばん/てい/じ/あう/す/"],
+["a/pp/re/he/n/si/ve/", "113000", ["o","a","ppp"],"/ア/プ/リ/ヘ/ン/シ/ブ/"]
 ]

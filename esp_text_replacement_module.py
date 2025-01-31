@@ -169,7 +169,7 @@ def create_replacements_list_for_intact_parts(text: str, placeholders: List[str]
             break  # プレースホルダーが足りなくなった場合は終了
     return replacements_list_for_intact_parts
 
-
+# '@'で囲まれた18文字(PEJVOに収録されている最長語根の文字数)以内の部分を同定し、局所的な文字列(漢字)置換を実行するための関数群
 # 関数外（モジュールのグローバルスコープ）でコンパイル
 AT_PATTERN = re.compile(r'@(.{1,18}?)@')
 def find_at_enclosed_strings_for_localized_replacement(text: str) -> List[str]:
