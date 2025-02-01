@@ -23,7 +23,6 @@ from esp_text_replacement_module import (
 
     orchestrate_comprehensive_esperanto_text_replacement,
     parallel_process,
-
     apply_ruby_html_header_and_footer
 )
 
