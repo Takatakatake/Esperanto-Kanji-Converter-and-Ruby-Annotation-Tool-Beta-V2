@@ -22,15 +22,15 @@ from esp_text_replacement_module import (
     import_placeholders,
 
     orchestrate_comprehensive_esperanto_text_replacement,
-    parallel_process
+    parallel_process,
+
+    apply_ruby_html_header_and_footer
 )
 
 # ページ設定
-st.set_page_config(page_title="Esperanto → 漢字変換ツール", layout="wide")
+st.set_page_config(page_title="Esperanto文の文字列(漢字)置換ツール", layout="wide")
 
 st.title("エスペラント文を漢字置換したり、HTML形式の訳ルビを振ったりする (拡張版)")
-
-# st.title("エスペラント文を漢字置換したり、HTML形式の訳ルビを振ったりする (拡張版)")
 
 st.write("---")
 
@@ -106,18 +106,24 @@ placeholders_for_localized_replacement: List[str] = import_placeholders(
 #     num_processes = st.number_input("同時プロセス数 (CPUコア数や環境による)", min_value=1, max_value=6, value=4, step=1)
 # サイドバーに囲み枠を作る
 
-with st.sidebar:
-    with st.expander("高度な設定", expanded=True):
-        use_parallel = st.checkbox("並列処理を使う", value=False)
-        num_processes = st.number_input("同時プロセス数", min_value=1, max_value=6, value=4)
+st.write("---")
 
+
+# 設定パラメータ (UI) - 高度な設定
+st.header("高度な設定 (並列処理)")
+with st.expander("並列処理についての設定を開く"):
+    st.write("""
+            ここでは、文字列(漢字)置換時に使用する並列処理のプロセス数を決めます。  
+            """)
+    use_parallel = st.checkbox("並列処理を使う", value=False)
+    num_processes = st.number_input("同時プロセス数", min_value=2, max_value=6, value=4, step=1)
 
 
 st.write("---")
 
 # 例: 出力形式など。必要に応じて追加カスタマイズ
 format_type = st.selectbox(
-    "出力形式を選択(置換用のJSONファイルを作成したときと同じ形式を選択):",
+    "出力形式を選択(置換用JSONファイルを作成したときと同じ形式を選択):",
     [
         "HTML格式_Ruby文字_大小调整",
         "HTML格式_Ruby文字_大小调整_汉字替换",
@@ -211,120 +217,32 @@ with st.form(key='text_input_form'):
             processed_text = replace_esperanto_chars(processed_text, x_to_hat)
             processed_text = replace_esperanto_chars(processed_text, circumflex_to_hat)
 
-        if format_type in ('HTML格式_Ruby文字_大小调整','HTML格式_Ruby文字_大小调整_汉字替换'):
-            ruby_style_head = """<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ほとんどの環境で動作するルビ表示</title>
-<style>
-
-    :root {
-    --ruby-color: blue;
-    --ruby-font-size: 50%;
-    }
-
-    .text-S_S { font-size: 12px; }
-    .text-M_M {
-    font-size: 16px; 
-    font-family: Arial, sans-serif;
-    line-height: 1.6 !important; 
-    display: block; 
-    position: relative;
-    }
-    .text-L_L { font-size: 20px; }
-    .text-X_X { font-size: 24px; }
-    ruby {
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    vertical-align: top !important;
-    line-height: 1.2 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    }
-    .ruby-XXXS_S { --ruby-font-size: 30%; }
-    .ruby-XXS_S { --ruby-font-size: 30%; }
-    .ruby-XS_S  { --ruby-font-size: 30%; }
-    .ruby-S_S   { --ruby-font-size: 40%; }
-    .ruby-M_M   { --ruby-font-size: 50%; }
-    .ruby-L_L   { --ruby-font-size: 60%; }
-    .ruby-XL_L  { --ruby-font-size: 70%; }
-    .ruby-XXL_L { --ruby-font-size: 80%; }
-    rt {
-    display: block !important;
-    font-size: var(--ruby-font-size);
-    color: var(--ruby-color);
-    line-height: 1.05;
-    text-align: center;
-    }
-    rt.ruby-XXXS_S {
-    transform: translateY(-6.6em) !important;
-    }    
-    rt.ruby-XXS_S {
-    transform: translateY(-5.6em) !important;
-    }
-    rt.ruby-XS_S {
-    transform: translateY(-4.6em) !important;
-    }
-    rt.ruby-S_S {
-    transform: translateY(-3.7em) !important;
-    }
-    rt.ruby-M_M {
-    transform: translateY(-3.1em) !important;
-    }
-    rt.ruby-L_L {
-    transform: translateY(-2.8em) !important;
-    }
-    rt.ruby-XL_L {
-    transform: translateY(-2.5em) !important;
-    }
-    rt.ruby-XXL_L {
-    transform: translateY(-2.3em) !important;
-    }
-
-</style>
-</head>
-<body>
-<p class="text-M_M">
-"""
-            ruby_style_tail = "</p></body></html>"
-        elif format_type in ('HTML格式','HTML格式_汉字替换'):
-            ruby_style_head = """<style>
-ruby rt {
-    color: blue;
-}
-</style>
-"""
-            ruby_style_tail = "<br>"
-        else:
-            ruby_style_head = ""
-            ruby_style_tail = ""
-
-        processed_text = ruby_style_head + processed_text + ruby_style_tail
+        processed_text = apply_ruby_html_header_and_footer(processed_text, format_type)
 
 # =========================================
 # フォーム外の処理: 結果表示・ダウンロード
 # =========================================
 if processed_text:
-    tab1, tab2 = st.tabs([ "HTMLプレビュー", "置換結果（HTML ソース）"])
 
     if "HTML" in format_type:
+        tab1, tab2 = st.tabs([ "HTMLプレビュー", "置換結果（HTML ソースコード）"])
         with tab1:
             # 実際の表示をプレビュー
-            components.html(processed_text, height=500, scrolling=True)   
-    with tab2:
-        st.text_area("置換後のテキスト (HTML)", processed_text, height=300)
-
-
+            components.html(processed_text, height=500, scrolling=True)
+        with tab2:
+            st.text_area("", processed_text, height=300)
+        
+    else:
+        tab3_list = st.tabs(["置換結果テキスト"])   
+        with tab3_list[0]:
+            st.text_area("", processed_text, height=300)
 
 
     download_data = processed_text.encode('utf-8')
     st.download_button(
-        label="ダウンロード (HTML)",
+        label="置換結果のダウンロード",
         data=download_data,
-        file_name="processed_text.html",
+        file_name="置換結果.html",
         mime="text/html"
     )
 

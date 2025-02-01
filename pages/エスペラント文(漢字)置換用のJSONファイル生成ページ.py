@@ -8,6 +8,8 @@ import streamlit as st
 from typing import List, Dict, Tuple, Optional
 import multiprocessing
 from io import StringIO
+import streamlit.components.v1 as components
+
 
 
 
@@ -15,6 +17,7 @@ from esp_text_replacement_module import (
     convert_to_circumflex,
     safe_replace,
     import_placeholders,
+    apply_ruby_html_header_and_footer
 )
 
 from esp_replacement_json_make_module import (
@@ -30,106 +33,113 @@ from esp_replacement_json_make_module import (
 with open("./Appの运行に使用する各类文件/Unicode_BMP全范围文字幅(宽)_Arial16.json", "r", encoding="utf-8") as fp:
     char_widths_dict = json.load(fp)   
 
+# ====== 1) ページ設定 & タイトル ======
+st.set_page_config(page_title="Esperanto文の文字列(漢字)置換用のJSONファイル生成ツール", layout="wide")
 st.title("エスペラント文の(漢字)置換に用いるJSONファイルを生成する。")
 
+st.write("---")
+# ====== 2) 概要説明 (使い方) ======
 # 大まかな使い方の概説を先頭付近にまとめる
-st.markdown("""
-## はじめに
-このページでは、最終的なエスペラント文の置換(main ページ)で用いる置換用のJSONファイル(50MB程度)を生成し、
-その結果をダウンロードできるようにします。
+with st.expander("使い方の説明を開く", expanded=True):
+    st.markdown("""
+    #### はじめに
+    このページでは、最終的なエスペラント文の置換(main ページ)で用いる置換用のJSONファイル(50MB程度)を生成し、
+    その結果をダウンロードできるようにします。
 
-以下の手順で利用してください:
-1. 必要な **CSV ファイル**(エスペラント語根→日本語訳 の対応表など) をアップロード、またはデフォルトを使用。
-2. 必要に応じて **JSON ファイル**(語根分解ルールや置換後文字列の設定など) をアップロード、またはデフォルトを使用。
-3. 最終的に生成される **置換用リスト**(JSON形式) をダウンロード。
+    以下の手順で利用してください:
+    1. 必要な **CSV ファイル**(エスペラント語根→日本語訳 の対応表など) をアップロード、またはデフォルトを使用。
+    2. 必要に応じて **JSON ファイル**(語根分解ルールや置換後文字列の設定など) をアップロード、またはデフォルトを使用。
+    3. 最終的に生成される **置換用JSONファイル**をダウンロード。
 
-下記にサンプルファイルを用意しています。書式の例としてご活用ください。
-""")
+    下記にサンプルファイルを用意しています。書式の例としてご活用ください。
+    """)
 
-st.write("### サンプルファイル一覧")
-# 例: 日本語訳ルビリスト
-st.markdown("""
-**サンプルCSV１(日本語訳ルビリスト)**  
-エスペラント語根と日本語訳を 1 行ずつ対応づけたCSVです。
-この形式に合わせて CSV を作成し、アップロードすることで置換用のJSONファイルを生成します。
-""")
-# サンプルファイルのパス
-file_path0 = './Appの运行に使用する各类文件/日本語訳ルビリスト_20250112_字上符形式.csv'
-# ファイルを読み込む
-with open(file_path0, "rb") as file:
-    btn = st.download_button(
-            label="サンプルCSV１(日本語訳ルビリスト)ダウンロード",
-            data=file,
-            file_name="エスペラント語根日本語訳ルビリスト.csv",
-            mime="text/csv"
+# ====== 3) サンプルファイル一覧 (折りたたみ) ======
+with st.expander("サンプルファイル一覧(ダウンロード用)"):
+    st.write("#### サンプルファイル一覧")
+    # 例: 日本語訳ルビリスト
+    st.markdown("""
+    **サンプルCSV１(日本語訳ルビリスト)**  
+    エスペラント語根と日本語訳を 1 行ずつ対応づけたCSVファイルです。  
+    この形式に合わせて CSV を作成し、アップロードすることで置換用のJSONファイルが生成されます。
+    """)
+    # サンプルファイルのパス
+    file_path0 = './Appの运行に使用する各类文件/日本語訳ルビリスト_20250112_字上符形式.csv'
+    # ファイルを読み込む
+    with open(file_path0, "rb") as file:
+        btn = st.download_button(
+                label="サンプルCSV１(日本語訳ルビリスト)ダウンロード",
+                data=file,
+                file_name="エスペラント語根日本語訳ルビリスト.csv",
+                mime="text/csv"
+            )
+
+    st.markdown("""
+    **サンプルCSV２(エスペラント語根漢字対応リスト)**  
+    こちらはエスペラント語根と漢字を対応づけたCSVファイルです。
+    """)
+    # サンプルファイルのパス
+    file_path0 = './Appの运行に使用する各类文件/エスペラント語根漢字対応リスト.csv'
+    # ファイルを読み込む
+    with open(file_path0, "rb") as file:
+        btn = st.download_button(
+                label="サンプルCSV２(エスペラント語根漢字対応リスト)ダウンロード",
+                data=file,
+                file_name="エスペラント語根漢字対応リスト.csv",
+                mime="text/csv"
+            )
+
+    st.markdown("""
+    **サンプルJSON１(エスペラント単語語根分解法ユーザー設定)**  
+    **用途**: エスペラント単語をどのように語根分解するかや、  
+    語尾に動詞活用語尾やその他品詞の語尾を加えた形を置換リストに加えるかなど、  
+    細かい設定をカスタムできます。サンプルJSONファイル内に詳しい説明が書いてあります。  
+    ( 例: `["am", "dflt", ["verbo_s1"]]` )""")
+    # サンプルファイルのパス
+    json_file_path = './Appの运行に使用する各类文件/世界语单词词根分解方法の使用者自定义设置.json'
+    # JSONファイルを読み込んでダウンロードボタンを生成
+    with open(json_file_path, "rb") as file_json:
+        btn_json = st.download_button(
+            label="サンプルJSON１(エスペラント単語語根分解法ユーザー設定)ダウンロード",
+            data=file_json,
+            file_name="エスペラント単語語根分解法ユーザー設定.json",
+            mime="application/json"
         )
 
-st.markdown("""
-**サンプルCSV２(エスペラント語根漢字対応リスト)**  
-こちらはエスペラント語根と漢字を対応づけたCSVの例です。
-""")
-# サンプルファイルのパス
-file_path0 = './Appの运行に使用する各类文件/エスペラント語根漢字対応リスト.csv'
-# ファイルを読み込む
-with open(file_path0, "rb") as file:
-    btn = st.download_button(
-            label="サンプルCSV２(エスペラント語根漢字対応リスト)ダウンロード",
-            data=file,
-            file_name="エスペラント語根漢字対応リスト.csv",
-            mime="text/csv"
+    st.markdown("""
+    ***サンプルJSON２(置換後文字列のユーザー設定)**  
+    **用途**: 特定の単語に対して、上記のようなカスタムの語根分解法に加えて、独自の漢字や文字列を割り当てる際に使用します。  
+    ( 基本的には上記のCSVファイルの編集と、語根分解法を設定するJSONファイルで事足りることが多いため、あまり推奨されない設定ファイルです。)  
+    サンプルJSON１と同じく、ファイル内に詳しい説明が書いてあります。
+    """)
+    # サンプルファイルのパス
+    json_file_path2 = './Appの运行に使用する各类文件/替换后文字列(汉字)の使用者自定义设置(基本上完全不推荐).json'
+    # JSONファイルを読み込んでダウンロードボタンを生成
+    with open(json_file_path2, "rb") as file_json:
+        btn_json = st.download_button(
+            label="サンプルJSON２(置換後文字列のユーザー設定)ダウンロード",
+            data=file_json,
+            file_name="置換後文字列のユーザー設定.json",
+            mime="application/json"
         )
 
-st.markdown("""
-**サンプルJSON１(エスペラント単語語根分解法ユーザー設定)**  
-**用途**: エスペラント語根をどのように分解するか、語尾に動詞活用語尾や
-その他品詞の語尾を加えた形を置換リストに加えるかなど、  
-細かい設定をユーザー側で追加できます。  
-( 例: `["am", "dflt", ["verbo_s1"]]` )""")
-# サンプルファイルのパス
-json_file_path = './Appの运行に使用する各类文件/世界语单词词根分解方法の使用者自定义设置.json'
-# JSONファイルを読み込んでダウンロードボタンを生成
-with open(json_file_path, "rb") as file_json:
-    btn_json = st.download_button(
-        label="サンプルJSON１(エスペラント単語語根分解法ユーザー設定)ダウンロード",
-        data=file_json,
-        file_name="エスペラント単語語根分解法ユーザー設定.json",
-        mime="application/json"
-    )
+    # サンプルエクセルファイルのダウンロードボタン
+    st.markdown("""
+    ***サンプルExcel１(エスペラント語根日本語訳ルビリスト)**  
+    **用途**: 翻訳ルビを追加するエスペラント語根をカスタムしたい場合、  
+    基本的に上記のCSVファイルを編集することになりますが、その際に役立つ
+    エスペラント語根の習得難易度(エスペラント日本語基本辞書を基にした)  
+    を併記したエクセルファイルです。
+    """)
+    with open('./Appの运行に使用する各类文件/エスペラント語根日本語訳ルビリスト.xlsx', "rb") as file:
+        st.download_button(
+            label="サンプルExcel１(エスペラント語根日本語訳ルビリスト)ダウンロード",
+            data=file,
+            file_name="エスペラント語根日本語訳ルビリスト.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
-st.markdown("""
-***サンプルJSON２(置換後文字列のユーザー設定)**  
-**用途**: 特定の単語に対して、独自の語根分解法に加えて、  
-独自の漢字や文字列を割り当てる際に使用します。 
-( 基本的には上記のCSVファイルの編集と、語根分解法を設定するJSONファイルで事足りることが多い  
-ため、あまり推奨しない設定です。)  
-""")
-# サンプルファイルのパス
-json_file_path2 = './Appの运行に使用する各类文件/替换后文字列(汉字)の使用者自定义设置(基本上完全不推荐).json'
-# JSONファイルを読み込んでダウンロードボタンを生成
-with open(json_file_path2, "rb") as file_json:
-    btn_json = st.download_button(
-        label="サンプルJSON２(置換後文字列のユーザー設定)ダウンロード",
-        data=file_json,
-        file_name="置換後文字列のユーザー設定.json",
-        mime="application/json"
-    )
-
-# サンプルエクセルファイルのダウンロードボタン
-st.markdown("""
-***サンプルExcel１(エスペラント語根日本語訳ルビリスト)**  
-**用途**: 翻訳ルビを追加するエスペラント語根をカスタムしたい場合、  
-基本的に上記のCSVファイルを編集することになりますが、その際に役立つ
-エスペラント語根の習得難易度(エスペラント日本語基本辞書を基にした)  
-を併記したエクセルファイルです。
-""")
-with open('./Appの运行に使用する各类文件/エスペラント語根日本語訳ルビリスト.xlsx', "rb") as file:
-    st.download_button(
-        label="サンプルExcel１(エスペラント語根日本語訳ルビリスト)ダウンロード",
-        data=file,
-        file_name="エスペラント語根日本語訳ルビリスト.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
+st.write("---")
 # ユーザーに見せる選択肢（韓国語）→これを日本語表記に変更
 options = {
     'HTML形式＿ルビ文字のサイズ調整': 'HTML格式_Ruby文字_大小调整',
@@ -151,14 +161,25 @@ format_type = options[selected_display]
 
 
 # 例示
-main_text = 'Esperanto'
-ruby_content = '世界语'
-formatted_text = output_format(main_text, ruby_content, format_type, char_widths_dict)
-st.write('フォーマット済みテキスト:', formatted_text)
+main_text_list = ['Esperant','lingv', 'pac', 'amik', 'ec']
+ruby_content_list = ['世界语', '语言', '和平', '友', '性质']
+formatted_text = ''
+for i, item in enumerate(main_text_list):
+    formatted_text += output_format(item, ruby_content_list[i], format_type, char_widths_dict)
+
+st.write("---")
+# components.html のサイズを調整する
+
+st.markdown("**フォーマット済みテキスト⇓**")
+components.html(apply_ruby_html_header_and_footer(formatted_text, format_type), height=40, scrolling=False)
+
+st.write("---")
+
+
 
 
 # --- CSV アップロード or デフォルト使用 ---
-st.header("ステップ1: CSVファイルを準備")
+st.header("ステップ１: CSVファイルを準備")
 st.markdown("""
 ここでは、エスペラント語根に対する翻訳情報などを載せた **CSV ファイル**を選択します。
 """)
@@ -271,18 +292,21 @@ elif json_choice2 == "デフォルトを使用する":
         st.stop()
 
 st.write("---")
-st.write("### 最終的な置換用リストの作成")
+
 
 # 設定パラメータ (UI) - 高度な設定
-st.markdown("#### 高度な設定 (並列処理)")
-st.write("""
-ここでは、置換リストの作成時に使用する並列処理のプロセス数を決めます。
-""")
-with st.expander("並列処理についての設定を開く"):
-    num_processes = st.number_input("同時プロセス数 (CPUコア数や環境による)", min_value=1, max_value=6, value=1, step=1)
+st.header("ステップ3: 高度な設定 (並列処理)")
 
-if st.button("置換リストを作成する"):
-    with st.spinner("置換リストを生成中... しばらくお待ちください。"):
+with st.expander("並列処理についての設定を開く"):
+    st.write("""
+            ここでは、置換JSONファイルの生成時に使用する並列処理のプロセス数を決めます。  
+            """)
+    use_parallel = st.checkbox("並列処理を使う", value=False)
+    num_processes = st.number_input("同時プロセス数", min_value=2, max_value=6, value=4, step=1)
+
+st.write("### 最終的な置換用JSONファイルの作成")
+if st.button("置換用JSONファイルを作成する"):
+    with st.spinner("置換用JSONファイルを生成中... しばらくお待ちください。"):
 
         with open("./Appの运行に使用する各类文件/PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表(E_stem_with_Part_Of_Speech_list).json", "r", encoding="utf-8") as g:
             E_stem_with_Part_Of_Speech_list = json.load(g)
@@ -338,7 +362,14 @@ if st.button("置換リストを作成する"):
         # 'PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表'(E_stem_with_Part_Of_Speech_list)を実際にリスト'temporary_replacements_list_final'(一時的な置換リストの完成版)によって文字列(漢字)置換。　
         # ここで作成される、"文字列(漢字)置換し終えたリスト(辞書型配列)"(pre_replacements_dict_1)こそが最終的な置換リスト(replacements_final_list)の大元になる。
         # リスト'E_stem_with_Part_Of_Speech_list'までは情報の損失は殆どないはず。
-        if num_processes == 1:
+
+        if use_parallel:
+            pre_replacements_dict_1 = parallel_build_pre_replacements_dict(
+            E_stem_with_Part_Of_Speech_list,
+            temporary_replacements_list_final,
+            num_processes)  # CPUコア数に応じて設定。Streamlit Cloudだと2とかになるかもしれません)
+
+        else:
             progress_bar = st.progress(0)
             progress_text = st.empty()  # 進行状況を文字で出すための領域
             # ループ対象の総件数を取得
@@ -366,11 +397,6 @@ if st.button("置換リストを作成する"):
             # ループ終了、進捗を100%にして完了表示
             progress_bar.progress(100)
             progress_text.write("一番時間がかかる処理が100% 完了しました。(あと3~4秒かかります。)")
-        else:
-            pre_replacements_dict_1 = parallel_build_pre_replacements_dict(
-            E_stem_with_Part_Of_Speech_list,
-            temporary_replacements_list_final,
-            num_processes)  # CPUコア数に応じて設定。Streamlit Cloudだと2とかになるかもしれません)
 
 
         keys_to_remove = ['domen', 'teren','posten']# 後でdomen/o,domen/a,domen/e等を追加する。　→確認済み(24/12)
