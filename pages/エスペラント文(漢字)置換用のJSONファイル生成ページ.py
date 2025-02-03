@@ -75,7 +75,22 @@ with st.expander("サンプルファイル一覧(ダウンロード用)"):
             )
 
     st.markdown("""
-    **サンプルCSV２(エスペラント語根漢字対応リスト)**  
+    **サンプルCSV２(エスペラント語根漢字対応リスト＿知乎上のエスペランチスト,Mingeo氏による漢字化案)**  
+    こちらはエスペラント語根と漢字を対応づけたCSVファイルです。
+    """)
+    # サンプルファイルのパス
+    file_path0 = './Appの运行に使用する各类文件/Mingeo_san_hanziization.csv'
+    # ファイルを読み込む
+    with open(file_path0, "rb") as file:
+        btn = st.download_button(
+                label="サンプルCSV２(エスペラント語根漢字対応リスト＿Mingeo氏)ダウンロード",
+                data=file,
+                file_name="エスペラント語根漢字対応リスト＿Mingeo氏.csv",
+                mime="text/csv"
+            )
+
+    st.markdown("""
+    **サンプルCSV３(エスペラント語根漢字対応リスト)**  
     こちらはエスペラント語根と漢字を対応づけたCSVファイルです。
     """)
     # サンプルファイルのパス
@@ -83,11 +98,12 @@ with st.expander("サンプルファイル一覧(ダウンロード用)"):
     # ファイルを読み込む
     with open(file_path0, "rb") as file:
         btn = st.download_button(
-                label="サンプルCSV２(エスペラント語根漢字対応リスト)ダウンロード",
+                label="サンプルCSV３(エスペラント語根漢字対応リスト)ダウンロード",
                 data=file,
                 file_name="エスペラント語根漢字対応リスト.csv",
                 mime="text/csv"
             )
+
 
     st.markdown("""
     **サンプルJSON１(エスペラント単語語根分解法ユーザー設定)**  
