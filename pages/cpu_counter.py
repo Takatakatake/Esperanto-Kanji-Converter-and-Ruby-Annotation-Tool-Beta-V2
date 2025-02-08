@@ -1,9 +1,6 @@
 import streamlit as st
 import multiprocessing
 
-
-st.set_page_config(page_title="利用可能なCPUコア数の表示", layout="wide")
-
 st.title('CPU Core Counter')
 st.write('Streamlit Cloudで利用可能なCPUコア数を表示します')
 
