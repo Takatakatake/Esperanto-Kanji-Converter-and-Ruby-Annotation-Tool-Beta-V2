@@ -74,49 +74,49 @@ with st.expander("サンプルファイル一覧(ダウンロード用)"):
     st.write("#### サンプルファイル一覧")
     # 例: 日本語訳ルビリスト
     st.markdown("""
-    **サンプルCSV１(日本語訳ルビリスト)**  
+    **サンプルCSV１(エスペラント語根-日本語訳ルビ対応リスト)**  
     エスペラント語根と日本語訳を 1 行ずつ対応づけたCSVファイルです。  
     この形式に合わせて CSV を作成し、アップロードすることで置換用のJSONファイルが生成されます。
     """)
     # サンプルファイルのパス
-    file_path0 = './Appの运行に使用する各类文件/日本語訳ルビリスト_20250112_字上符形式.csv'
+    file_path0 = './Appの运行に使用する各类文件/エスペラント語根-日本語訳ルビ対応リスト.csv'
     # ファイルを読み込む
     with open(file_path0, "rb") as file:
         btn = st.download_button(
-                label="サンプルCSV１(日本語訳ルビリスト)ダウンロード",
+                label="サンプルCSV１(エスペラント語根-日本語訳ルビ対応リスト)ダウンロード",
                 data=file,
-                file_name="エスペラント語根日本語訳ルビリスト.csv",
+                file_name="エスペラント語根-日本語訳ルビ対応リスト.csv",
                 mime="text/csv"
             )
 
     st.markdown("""
-    **サンプルCSV２(エスペラント語根漢字対応リスト＿知乎上のエスペランチスト,Mingeo氏による漢字化案)**  
+    **サンプルCSV２(エスペラント語根-漢字対応リスト　知乎上のエスペランチスト,Mingeo氏による漢字化案)**  
     こちらはエスペラント語根と漢字を対応づけたCSVファイルです。
     """)
     # サンプルファイルのパス
-    file_path0 = './Appの运行に使用する各类文件/Mingeo_san_hanziization.csv'
+    file_path0 = './Appの运行に使用する各类文件/Mingeo先生版 世界语词根-汉字对应列表.csv'
     # ファイルを読み込む
     with open(file_path0, "rb") as file:
         btn = st.download_button(
-                label="サンプルCSV２(エスペラント語根漢字対応リスト＿Mingeo氏)ダウンロード",
+                label="サンプルCSV２(エスペラント語根-漢字対応リスト＿Mingeo氏)ダウンロード",
                 data=file,
-                file_name="エスペラント語根漢字対応リスト＿Mingeo氏.csv",
+                file_name="エスペラント語根-漢字対応リスト＿Mingeo氏.csv",
                 mime="text/csv"
             )
 
 
     st.markdown("""
-    **サンプルCSV３(エスペラント語根漢字対応リスト)**  
+    **サンプルCSV３(エスペラント語根-漢字対応リスト)**  
     こちらはエスペラント語根と漢字を対応づけたCSVファイルです。
     """)
     # サンプルファイルのパス
-    file_path0 = './Appの运行に使用する各类文件/エスペラント語根漢字対応リスト.csv'
+    file_path0 = './Appの运行に使用する各类文件/世界语词根-汉字对应列表.csv'
     # ファイルを読み込む
     with open(file_path0, "rb") as file:
         btn = st.download_button(
-                label="サンプルCSV３(エスペラント語根漢字対応リスト)ダウンロード",
+                label="サンプルCSV３(エスペラント語根-漢字対応リスト)ダウンロード",
                 data=file,
-                file_name="エスペラント語根漢字対応リスト.csv",
+                file_name="エスペラント語根-漢字対応リスト.csv",
                 mime="text/csv"
             )
 
@@ -156,17 +156,17 @@ with st.expander("サンプルファイル一覧(ダウンロード用)"):
 
     # サンプルエクセルファイルのダウンロードボタン
     st.markdown("""
-    ***サンプルExcel１(エスペラント語根日本語訳ルビリスト)**  
+    ***サンプルExcel１(エスペラント語根-日本語訳ルビ対応リスト(習得レベル付き))**  
     **用途**: 翻訳ルビを追加するエスペラント語根をカスタムしたい場合、  
     基本的に上記のCSVファイルを編集することになりますが、その際に役立つ
-    エスペラント語根の習得難易度(エスペラント日本語基本辞書を基にした)  
+    エスペラント語根の習得レベル(エスペラント日本語基本辞書を基にした)  
     を併記したエクセルファイルです。
     """)
-    with open('./Appの运行に使用する各类文件/エスペラント語根日本語訳ルビリスト.xlsx', "rb") as file:
+    with open('./Appの运行に使用する各类文件/エスペラント語根-日本語訳ルビ対応リスト(習得レベル付き).xlsx', "rb") as file:
         st.download_button(
-            label="サンプルExcel１(エスペラント語根日本語訳ルビリスト)ダウンロード",
+            label="サンプルExcel１(エスペラント語根-日本語訳ルビ対応リスト(習得レベル付き))ダウンロード",
             data=file,
-            file_name="エスペラント語根日本語訳ルビリスト.xlsx",
+            file_name="エスペラント語根-日本語訳ルビ対応リスト(習得レベル付き).xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -216,7 +216,7 @@ st.markdown("""
 """)
 csv_choice = st.radio("CSVファイルをどうしますか？", ("アップロードする", "デフォルトを使用する"))
 
-csv_path_default = "./Appの运行に使用する各类文件/日本語訳ルビリスト_20250112_字上符形式.csv" 
+csv_path_default = "./Appの运行に使用する各类文件/世界语词根-汉字对应列表.csv" 
     # ↑デフォルトとして使いたいCSVファイルのパス(例)
 
 # CSV_data_imported の初期化
@@ -441,14 +441,13 @@ if st.button("置換用JSONファイルを作成する"):
             if i==j[0]:# 置換しない単語  # ⇓の右辺では、HTMLのルビ形式に含まれる'/'を避けながら'置換後の文字列'から"/"を抜く処理を行っている。HTML形式でなくてもしても大丈夫な処理なので、出力形式が'括弧(号)格式'や'替换后文字列のみ(仅)保留(简单替换)'であっても心配無用。
                 pre_replacements_dict_2[i.replace('/', '')]=[j[0].replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"),j[1],len(i.replace('/', ''))*10000-3000]# 置換しない単語は優先順位を下げる
             else:
-                j[0] = remove_redundant_ruby_if_identical(j[0])# 202502追加
                 pre_replacements_dict_2[i.replace('/', '')]=[j[0].replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"),j[1],len(i.replace('/', ''))*10000]
 
 
 
         verb_suffix_2l_2={}
         for original_verb_suffix,replaced_verb_suffix in verb_suffix_2l.items():
-            verb_suffix_2l_2[original_verb_suffix]=remove_redundant_ruby_if_identical(safe_replace(replaced_verb_suffix, temporary_replacements_list_final))# 202502追加(remove_redundant_ruby_if_identical)
+            verb_suffix_2l_2[original_verb_suffix]=safe_replace(replaced_verb_suffix, temporary_replacements_list_final)# 202502追加(remove_redundant_ruby_if_identical)
 
 
         # 一番の工夫ポイント(如何にして置換の優先順位を定め、置換精度を向上させるか。)
@@ -647,6 +646,7 @@ if st.button("置換用JSONファイルを作成する"):
 
         # 外部ファイルを読み込む形式に変えた。行われている処理は全く同じ。
         # ★一番最初だけチェックして、説明用の項目を削除する。
+        # ★一番最初だけチェックして、説明用の項目を削除する
         if len(custom_stemming_setting_list) > 0:
             if len(custom_stemming_setting_list[0]) != 3:
                 # 最初のリストの要素の数が3つでなければ、これを説明用の項目であると判断して削除する。
@@ -683,7 +683,7 @@ if st.button("置換用JSONファイルを作成する"):
                     elif isinstance(i[1], int) or (isinstance(i[1], str) and i[1].isdigit()):  # 整数または整数に変換可能な文字列
                         replacement_priority_by_length = int(i[1])  # 文字列の場合は整数に変換
                         
-                    Replaced_String = remove_redundant_ruby_if_identical(safe_replace(i[0],temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"))# 202502追加(remove_redundant_ruby_if_identical)
+                    Replaced_String = safe_replace(i[0],temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>")
                     if "ne" in i[2]:
                         pre_replacements_dict_3[esperanto_Word_before_replacement]=[Replaced_String, replacement_priority_by_length]
                         i[2].remove("ne")#　これがあるので、再実行には要注意!(おそらく問題ない)
@@ -704,7 +704,6 @@ if st.button("置換用JSONファイルを作成する"):
                         pre_replacements_dict_3[esperanto_Word_before_replacement]=[Replaced_String, replacement_priority_by_length]
                 except:
                     continue
-
 
 
         # ★一番最初だけチェックして、説明用の項目を削除する
@@ -761,7 +760,7 @@ if st.button("置換用JSONファイルを作成する"):
         pre_replacements_list_3=[]
         for kk in range(len(pre_replacements_list_2)):
             if len(pre_replacements_list_2[kk][0])>=3:# 3文字以上でいいのではないか(202412)  la対策として考案された。
-                pre_replacements_list_3.append([pre_replacements_list_2[kk][0],pre_replacements_list_2[kk][1],imported_placeholders_for_global_replacement[kk]])
+                pre_replacements_list_3.append([pre_replacements_list_2[kk][0],remove_redundant_ruby_if_identical(pre_replacements_list_2[kk][1]),imported_placeholders_for_global_replacement[kk]])# 202502追加(remove_redundant_ruby_if_identical) '大文字'、'小文字'、'文頭だけ大文字'の3パターンに増えてしまう直前に発動。
 
         # '大文字'、'小文字'、'文頭だけ大文字'の3パターンに対応。
         pre_replacements_list_4=[]
