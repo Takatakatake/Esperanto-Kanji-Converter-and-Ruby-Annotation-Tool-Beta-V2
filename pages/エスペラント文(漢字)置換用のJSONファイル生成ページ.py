@@ -333,7 +333,7 @@ with st.expander("並列処理についての設定を開く"):
             ここでは、置換JSONファイルの生成時に使用する並列処理のプロセス数を決めます。  
             """)
     use_parallel = st.checkbox("並列処理を使う", value=False)
-    num_processes = st.number_input("同時プロセス数", min_value=2, max_value=6, value=4, step=1)
+    num_processes = st.number_input("同時プロセス数", min_value=2, max_value=6, value=5, step=1)
 
 st.write("### 最終的な置換用JSONファイルの作成")
 if st.button("置換用JSONファイルを作成する"):
