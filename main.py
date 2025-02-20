@@ -161,8 +161,8 @@ with st.expander("並列処理についての設定を開く"):
     st.write("""
     ここでは、文字列(漢字)置換時に使用する並列処理のプロセス数を決めます。 
     """)
-use_parallel = st.checkbox("並列処理を使う", value=False)
-num_processes = st.number_input("同時プロセス数", min_value=2, max_value=4, value=4, step=1)
+    use_parallel = st.checkbox("並列処理を使う", value=False)
+    num_processes = st.number_input("同時プロセス数", min_value=2, max_value=4, value=4, step=1)
 
 st.write("---")
 
@@ -170,18 +170,25 @@ st.write("---")
 # 例: 出力形式の選択
 # (HTMLルビ形式・括弧形式・文字列のみ など)
 #=================================================================
-format_type = st.selectbox(
-    "出力形式を選択(置換用JSONファイルを作成したときと同じ形式を選択):",
-    [
-        "HTML格式_Ruby文字_大小调整",
-        "HTML格式_Ruby文字_大小调整_汉字替换",
-        "HTML格式",
-        "HTML格式_汉字替换",
-        "括弧(号)格式",
-        "括弧(号)格式_汉字替换",
-        "替换后文字列のみ(仅)保留(简单替换)"
-    ]
-)
+
+
+# ユーザー向け選択肢（キー側を韓国語に変更 / 値側は機能維持のためそのまま）
+options = {
+    'HTML格式_Ruby文字_大小调整': 'HTML格式_Ruby文字_大小调整',
+    'HTML格式_Ruby文字_大小调整_汉字替换': 'HTML格式_Ruby文字_大小调整_汉字替换',
+    'HTML格式': 'HTML格式',
+    'HTML格式_汉字替换': 'HTML格式_汉字替换',
+    '括弧(号)格式': '括弧(号)格式',
+    '括弧(号)格式_汉字替换': '括弧(号)格式_汉字替换',
+    '替换后文字列のみ(仅)保留(简单替换)': '替换后文字列のみ(仅)保留(简单替换)'
+}
+
+# 사용자에게 보여줄 옵션 목록 (라벨)은 위의 dict 키들을 사용
+display_options = list(options.keys())
+selected_display = st.selectbox("出力形式を選択(置換用JSONファイルを作成したときと同じ形式を選択):", display_options)
+format_type = options[selected_display]
+
+
 
 # フォーム外で、変数 processed_text を初期化しておく
 processed_text = ""
