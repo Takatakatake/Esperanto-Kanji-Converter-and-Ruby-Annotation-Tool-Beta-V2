@@ -1,3 +1,35 @@
+##  エスペラント文(漢字)置換用のJSONファイル生成ページ.py(2つ目)
+#############################
+# page.py (Streamlit特有のpagesフォルダに入れるコード)
+# 
+# 【概要】
+#  このページでは、「エスペラント文の漢字(日本語)置換」で使う
+#  最終的な JSON ファイル(合并3個JSONファイル)を生成する機能を提供します。
+# 
+# 【主な流れ】
+#  1) CSVファイルを取り込み(エスペラント語根→漢字/日本語訳の対応)
+#  2) エスペラント単語の語根分解法などを記述したJSONファイルを取り込み
+#  3) 必要に応じて並列処理を設定
+#  4) ボタン押下で、「置換用の巨大JSON」を最終生成&ダウンロード可能
+#
+# 【内部処理のポイント】
+#  - CSVによる「語根→翻訳」情報を独自のsafe_replace()を使って(placeholder経由で)置換
+#  - 動詞の活用形(as,is,os...)や接頭辞/接尾辞(2文字語根)などを自動的に展開して
+#    文字数に応じた「置換優先順位」を設定
+#  - カスタムのJSON(語根分解法 / 置換後文字列)も合体してさらに展開
+#  - 最終的に「全域替换用のリスト」「局部文字替換用のリスト」「二文字词根替换用リスト」の3つを合并
+#  - ダウンロードボタンで JSONファイルとして取得
+#############################
+# page.py (Streamlit特有のpagesフォルダに入れるコード)
+# こちらは「置換用JSONファイルを自分で作成したい」場合に利用するツールです。
+# main.pyで使う「置換用JSON(合并3個JSONファイル)」を生成するための処理がまとまっています。
+
+
+
+# page.py (Streamlit特有のpagesフォルダに入れるコード)
+# こちらは「置換用JSONファイルを自分で作成したい」場合に利用するツールです。
+# (main.pyで使う「合并3個JSONファイル」形式の置換用JSONを生成するための処理をまとめています)
+
 import streamlit as st
 import pandas as pd
 import io
@@ -6,133 +38,188 @@ import re
 import json
 import streamlit as st
 from typing import List, Dict, Tuple, Optional
+import multiprocessing
 from io import StringIO
 import streamlit.components.v1 as components
 
-import multiprocessing
-# multiprocessing時のPicklingError回避のため 'spawn' を明示: streamlitでは必ず必要。
-try:
-    multiprocessing.set_start_method("spawn")
-except RuntimeError:
-    pass  # すでに start method が設定済みの場合はここで無視する
-
-# 関数群
+#---------------------------------------------------------------------
+# esp_text_replacement_module.py と esp_replacement_json_make_module.py
+# から、必要な関数をインポートして利用します。
+# これら2つのモジュールは、エスペラント文字変換・ルビ付与・並列置換など、
+# 主に裏方処理(ユーティリティ)を提供する仕組みになっています。
+#---------------------------------------------------------------------
 from esp_text_replacement_module import (
-    convert_to_circumflex,
-    safe_replace,
-    import_placeholders,
-    apply_ruby_html_header_and_footer
+    convert_to_circumflex,     # エスペラントの文字(ĉ等)形式に変換する関数(cx/c^→ĉなど)
+    safe_replace,              # (old→placeholder→new)の段階置換を安全に行う関数
+    import_placeholders,       # プレースホルダ文字列をファイルから読み込む関数
+    apply_ruby_html_header_and_footer  # HTMLのルビ表示用ヘッダ/フッタを付加する関数
 )
 from esp_replacement_json_make_module import (
-    convert_to_circumflex,
-    output_format,
-    import_placeholders,
-    capitalize_ruby_and_rt,
-    process_chunk_for_pre_replacements,
-    parallel_build_pre_replacements_dict,
-    remove_redundant_ruby_if_identical
+    convert_to_circumflex,     # 同じ名前の関数(こちらも字上符に変換)
+    output_format,             # ルビや括弧形式などの出力フォーマットを生成
+    import_placeholders,       # プレースホルダを読み込む（同名の関数だが別モジュール）
+    capitalize_ruby_and_rt,    # <ruby>タグ内部の文字を大文字化(冒頭のみ)する関数
+    process_chunk_for_pre_replacements,  # 並列処理で一括置換する下請け関数
+    parallel_build_pre_replacements_dict,# 大量データの置換を並列化して辞書化する関数
+    remove_redundant_ruby_if_identical  # 重複ルビ(親文字と同一の場合)を取り除く関数
 )
 
-# 変数群
-# 基本的には动词に対してのみ活用語尾・接尾辞を追加し、置換対象の単語の文字数を増やす(置換の優先順位を上げる。)
-verb_suffix_2l={'as':'as', 'is':'is', 'os':'os', 'us':'us','at':'at','it':'it','ot':'ot', 'ad':'ad','iĝ':'iĝ','ig':'ig','ant':'ant','int':'int','ont':'ont'}
+#---------------------------------------------------------------------
+# 以下は動詞接尾辞や特殊接尾辞などを扱うための変数群です。
+# 動詞の活用語尾(as,is,os,usなど)や、接尾辞「an」「on」などのデータを
+# コード下部での処理でまとめて扱うために定義しています。
+#---------------------------------------------------------------------
+
+# 動詞の活用語尾 (例: as,is,os,us など) を表す辞書
+# キーは活用語尾そのもの、バリューも基本的には同じ文字列を入れていますが、
+# 後段で safe_replace() によって(ルビ等)を挿入できるようにしてあります。
+verb_suffix_2l = {
+    'as':'as', 'is':'is', 'os':'os', 'us':'us','at':'at','it':'it','ot':'ot',
+    'ad':'ad','iĝ':'iĝ','ig':'ig','ant':'ant','int':'int','ont':'ont'
+}
+
+#---------------------------------------------------------------------
+# 例: an, on は後の処理で文字列(漢字)と紐づけるためのサンプルデータ
+# ここではAN, ON としてリストを定義し、末尾が"an"/"on"の単語について、
+# 語根分割(形容詞語尾/名詞語尾として扱うか、接尾辞"an"として扱うかetc)を
+# 判定する際に活用する。後段のコードで優先順位を再設定する処理で参照されます。
+#---------------------------------------------------------------------
 AN=[['dietan', '/diet/an/', '/diet/an'], ['afrikan', '/afrik/an/', '/afrik/an'], ['movadan', '/mov/ad/an/', '/mov/ad/an'], ['akcian', '/akci/an/', '/akci/an'], ['montaran', '/mont/ar/an/', '/mont/ar/an'], ['amerikan', '/amerik/an/', '/amerik/an'], ['regnan', '/regn/an/', '/regn/an'], ['dezertan', '/dezert/an/', '/dezert/an'], ['asocian', '/asoci/an/', '/asoci/an'], ['insulan', '/insul/an/', '/insul/an'], ['azian', '/azi/an/', '/azi/an'], ['ŝtatan', '/ŝtat/an/', '/ŝtat/an'], ['doman', '/dom/an/', '/dom/an'], ['montan', '/mont/an/', '/mont/an'], ['familian', '/famili/an/', '/famili/an'], ['urban', '/urb/an/', '/urb/an'], ['popolan', '/popol/an/', '/popol/an'], ['dekan', '/dekan/', '/dek/an'], ['partian', '/parti/an/', '/parti/an'], ['lokan', '/lok/an/', '/lok/an'], ['ŝipan', '/ŝip/an/', '/ŝip/an'], ['eklezian', '/eklezi/an/', '/eklezi/an'], ['landan', '/land/an/', '/land/an'], ['orientan', '/orient/an/', '/orient/an'], ['lernejan', '/lern/ej/an/', '/lern/ej/an'], ['enlandan', '/en/land/an/', '/en/land/an'], ['kalkan', '/kalkan/', '/kalk/an'], ['estraran', '/estr/ar/an/', '/estr/ar/an'], ['etnan', '/etn/an/', '/etn/an'], ['eŭropan', '/eŭrop/an/', '/eŭrop/an'], ['fazan', '/fazan/', '/faz/an'], ['polican', '/polic/an/', '/polic/an'], ['socian', '/soci/an/', '/soci/an'], ['societan', '/societ/an/', '/societ/an'], ['grupan', '/grup/an/', '/grup/an'], ['ligan', '/lig/an/', '/lig/an'], ['nacian', '/naci/an/', '/naci/an'], ['koran', '/koran/', '/kor/an'], ['religian', '/religi/an/', '/religi/an'], ['kuban', '/kub/an/', '/kub/an'], ['majoran', '/major/an/', '/major/an'], ['nordan', '/nord/an/', '/nord/an'], ['paran', 'paran', '/par/an'], ['parizan', '/pariz/an/', '/pariz/an'], ['parokan', '/parok/an/', '/parok/an'], ['podian', '/podi/an/', '/podi/an'], ['rusian', '/rus/i/an/', '/rus/ian'], ['satan', '/satan/', '/sat/an'], ['sektan', '/sekt/an/', '/sekt/an'], ['senatan', '/senat/an/', '/senat/an'], ['skisman', '/skism/an/', '/skism/an'], ['sudan', 'sudan', '/sud/an'], ['utopian', '/utopi/an/', '/utopi/an'], ['vilaĝan', '/vilaĝ/an/', '/vilaĝ/an'], ['arĝentan', '/arĝent/an/', '/arĝent/an']]
 ON=[['duon', '/du/on/', '/du/on'], ['okon', '/ok/on/', '/ok/on'], ['nombron', '/nombr/on/', '/nombr/on'], ['patron', '/patron/', '/patr/on'], ['karbon', '/karbon/', '/karb/on'], ['ciklon', '/ciklon/', '/cikl/on'], ['aldon', '/al/don/', '/ald/on'], ['balon', '/balon/', '/bal/on'], ['baron', '/baron/', '/bar/on'], ['baston', '/baston/', '/bast/on'], ['magneton', '/magnet/on/', '/magnet/on'], ['beton', 'beton', '/bet/on'], ['bombon', '/bombon/', '/bomb/on'], ['breton', 'breton', '/bret/on'], ['burĝon', '/burĝon/', '/burĝ/on'], ['centon', '/cent/on/', '/cent/on'], ['milon', '/mil/on/', '/mil/on'], ['kanton', '/kanton/', '/kant/on'], ['citron', '/citron/', '/citr/on'], ['platon', 'platon', '/plat/on'], ['dekon', '/dek/on/', '/dek/on'], ['kvaron', '/kvar/on/', '/kvar/on'], ['kvinon', '/kvin/on/', '/kvin/on'], ['seson', '/ses/on/', '/ses/on'], ['trion', '/tri/on/', '/tri/on'], ['karton', '/karton/', '/kart/on'], ['foton', '/fot/on/', '/fot/on'], ['peron', '/peron/', '/per/on'], ['elektron', '/elektr/on/', '/elektr/on'], ['drakon', 'drakon', '/drak/on'], ['mondon', '/mon/don/', '/mond/on'], ['pension', '/pension/', '/pensi/on'], ['ordon', '/ordon/', '/ord/on'], ['eskadron', 'eskadron', '/eskadr/on'], ['senton', '/sen/ton/', '/sent/on'], ['eston', 'eston', '/est/on'], ['fanfaron', '/fanfaron/', '/fanfar/on'], ['feston', '/feston/', '/fest/on'], ['flegmon', 'flegmon', '/flegm/on'], ['fronton', '/fronton/', '/front/on'], ['galon', '/galon/', '/gal/on'], ['mason', '/mason/', '/mas/on'], ['helikon', 'helikon', '/helik/on'], ['kanon', '/kanon/', '/kan/on'], ['kapon', '/kapon/', '/kap/on'], ['kokon', '/kokon/', '/kok/on'], ['kolon', '/kolon/', '/kol/on'], ['komision', '/komision/', '/komisi/on'], ['salon', '/salon/', '/sal/on'], ['ponton', '/ponton/', '/pont/on'], ['koton', '/koton/', '/kot/on'], ['kripton', 'kripton', '/kript/on'], ['kupon', '/kupon/', '/kup/on'], ['lakon', 'lakon', '/lak/on'], ['ludon', '/lu/don/', '/lud/on'], ['melon', '/melon/', '/mel/on'], ['menton', '/menton/', '/ment/on'], ['milion', '/milion/', '/mili/on'], ['milionon', '/milion/on/', '/milion/on'], ['naŭon', '/naŭ/on/', '/naŭ/on'], ['violon', '/violon/', '/viol/on'], ['trombon', '/trombon/', '/tromb/on'], ['senson', '/sen/son/', '/sens/on'], ['sepon', '/sep/on/', '/sep/on'], ['skadron', 'skadron', '/skadr/on'], ['stadion', '/stadion/', '/stadi/on'], ['tetraon', 'tetraon', '/tetra/on'], ['timon', '/timon/', '/tim/on'], ['valon', 'valon', '/val/on']]
+
+# allowed_values は -1 表記などを含む例 (ユーザーが単語を排除したい場合に用いる)
+# たとえば、ユーザーのJSON設定で "['xxx', -1, [...]]" となっていたら、
+# その単語を置換対象から完全に外す、といった処理を行うときに使用される。
 allowed_values = {-1, "-1", "ー１", "ー1", "-１", "－１", "－1"}
+
+#=====================================================================
+# 二文字の語根を扱うためのリスト
+# suffix_2char_roots : 接尾辞 (ad, ag, am, ar など)
+# prefix_2char_roots : 接頭辞 (al, am, av, bo など)
+# standalone_2char_roots : 単体でも語根になる (al, ci, da, de など)
+#=====================================================================
 suffix_2char_roots=['ad', 'ag', 'am', 'ar', 'as', 'at', 'av', 'di', 'ec', 'eg', 'ej', 'em', 'er', 'et', 'id', 'ig', 'il', 'in', 'ir', 'is', 'it', 'lu', 'nj', 'op', 'or', 'os', 'ot', 'ov', 'pi', 'te', 'uj', 'ul', 'um', 'us', 'uz','ĝu','aĵ','iĝ','aĉ','aĝ','ŝu','eĥ']
 prefix_2char_roots=['al', 'am', 'av', 'bo', 'di', 'du', 'ek', 'el', 'en', 'fi', 'ge', 'ir', 'lu', 'ne', 'ok', 'or', 'ov', 'pi', 're', 'te', 'uz','ĝu','aĉ','aĝ','ŝu','eĥ']
 standalone_2char_roots=['al', 'ci', 'da', 'de', 'di', 'do', 'du', 'el', 'en', 'fi', 'ha', 'he', 'ho', 'ia', 'ie', 'io', 'iu', 'ja', 'je', 'ju','ke', 'la', 'li', 'mi', 'ne', 'ni', 'nu', 'ok', 'ol', 'po', 'se', 'si', 've', 'vi','ŭa','aŭ','ĉe','ĝi','ŝi','ĉu']
-# an,onはなしにする。
-imported_placeholders_for_global_replacement = import_placeholders('./Appの运行に使用する各类文件/占位符(placeholders)_$20987$-$499999$_全域替换用.txt')
-imported_placeholders_for_2char_replacement = import_placeholders('./Appの运行に使用する各类文件/占位符(placeholders)_$13246$-$19834$_二文字词根替换用.txt')# 文字列(漢字)置換時に用いる"placeholder"ファイルを予め読み込んでおく。
-imported_placeholders_for_local_replacement = import_placeholders('./Appの运行に使用する各类文件/占位符(placeholders)_@20374@-@97648@_局部文字列替换用.txt')
 
+# an, on は別扱いのため、ここでの二文字リストからは除外されています。
 
-# 事前に作成した Unicode_BMP全范围文字幅(宽)_Arial16.json ファイルを読み込み
+#=====================================================================
+# placeholders (占位符ファイル) を予め読み込み
+# main.py での文字列(漢字)置換で衝突や誤置換が起こらないように
+# 一意の placeholder を使う設計になっているため、
+# それら placeholder文字列を外部ファイルから大量に読み込みます。
+#=====================================================================
+imported_placeholders_for_global_replacement = import_placeholders(
+    './Appの运行に使用する各类文件/占位符(placeholders)_$20987$-$499999$_全域替换用.txt'
+)
+imported_placeholders_for_2char_replacement = import_placeholders(
+    './Appの运行に使用する各类文件/占位符(placeholders)_$13246$-$19834$_二文字词根替换用.txt'
+)
+imported_placeholders_for_local_replacement = import_placeholders(
+    './Appの运行に使用する各类文件/占位符(placeholders)_@20374@-@97648@_局部文字列替换用.txt'
+)
+
+#=====================================================================
+# 事前に作成した "Unicode_BMP全范围文字幅(宽)_Arial16.json" を読み込み
+# (ルビサイズの調整等で使う想定。文字幅に応じた改行などができる)
+#=====================================================================
 with open("./Appの运行に使用する各类文件/Unicode_BMP全范围文字幅(宽)_Arial16.json", "r", encoding="utf-8") as fp:
-    char_widths_dict = json.load(fp)   
+    char_widths_dict = json.load(fp)
 
-# ====== 1) ページ設定 & タイトル ======
-st.set_page_config(page_title="Esperanto文の文字列(漢字)置換用のJSONファイル生成ツール", layout="wide")
+#=====================================================================
+# 1) ページ設定 & タイトル
+# page_title: ブラウザタブに表示されるタイトル
+# layout="wide" で横幅を広く使えるUIにする
+#=====================================================================
+st.set_page_config(
+    page_title="Esperanto文の文字列(漢字)置換用のJSONファイル生成ツール",
+    layout="wide"
+)
 st.title("エスペラント文の(漢字)置換に用いるJSONファイルを生成する。")
-
 st.write("---")
-# ====== 2) 概要説明 (使い方) ======
-# 大まかな使い方の概説を先頭付近にまとめる
+
+#=====================================================================
+# 2) 概要説明 (使い方)
+#=====================================================================
 with st.expander("使い方の説明を開く", expanded=True):
     st.markdown("""
     #### はじめに
-    このページでは、最終的なエスペラント文の置換(main ページ)で用いる置換用のJSONファイル(50MB程度)を生成し、
+    このページでは、最終的なエスペラント文の置換(main ページ)で用いる
+    置換用のJSONファイル(50MB程度になることも)を生成し、
     その結果をダウンロードできるようにします。
 
-    以下の手順で利用してください:
+    利用手順は以下の通りです:
     1. 必要な **CSV ファイル**(エスペラント語根→日本語訳 の対応表など) をアップロード、またはデフォルトを使用。
     2. 必要に応じて **JSON ファイル**(語根分解ルールや置換後文字列の設定など) をアップロード、またはデフォルトを使用。
-    3. 最終的に生成される **置換用JSONファイル**をダウンロード。
+    3. 「置換用JSONファイルを作成する」を押して生成された
+       **置換用JSONファイル**をダウンロード。
 
-    下記にサンプルファイルを用意しています。書式の例としてご活用ください。
+    下記にはサンプルファイルも用意しており、カスタム設定の書式などを
+    参考にしていただけます。
     """)
 
-# ====== 3) サンプルファイル一覧 (折りたたみ) ======
+#=====================================================================
+# 3) サンプルファイル一覧 (折りたたみ)
+# ここでは、サンプル用のCSVやJSON、Excelファイルを
+# ダウンロードするボタンを設けています。
+#=====================================================================
 with st.expander("サンプルファイル一覧(ダウンロード用)"):
     st.write("#### サンプルファイル一覧")
-    # 例: 日本語訳ルビリスト
+
+    # サンプルCSV１
     st.markdown("""
-    **サンプルCSV１(エスペラント語根-日本語訳ルビ対応リスト)**  
-    エスペラント語根と日本語訳を 1 行ずつ対応づけたCSVファイルです。  
-    この形式に合わせて CSV を作成し、アップロードすることで置換用のJSONファイルが生成されます。
+    **サンプルCSV１(エスペラント語根-日本語訳ルビ対応リスト)**
+    エスペラント語根と日本語訳を 1 行ずつ対応づけたCSVファイルです。
+    この形式に合わせて CSV を作成し、アップロードすることで
+    置換用のJSONファイルが生成されます。
     """)
-    # サンプルファイルのパス
     file_path0 = './Appの运行に使用する各类文件/エスペラント語根-日本語訳ルビ対応リスト.csv'
-    # ファイルを読み込む
     with open(file_path0, "rb") as file:
         btn = st.download_button(
-                label="サンプルCSV１(エスペラント語根-日本語訳ルビ対応リスト)ダウンロード",
-                data=file,
-                file_name="エスペラント語根-日本語訳ルビ対応リスト.csv",
-                mime="text/csv"
-            )
+            label="サンプルCSV１(エスペラント語根-日本語訳ルビ対応リスト)ダウンロード",
+            data=file,
+            file_name="エスペラント語根-日本語訳ルビ対応リスト.csv",
+            mime="text/csv"
+        )
 
+    # サンプルCSV２
     st.markdown("""
-    **サンプルCSV２(エスペラント語根-漢字対応リスト　知乎上のエスペランチスト,Mingeo氏による漢字化案)**  
+    **サンプルCSV２(エスペラント語根-漢字対応リスト　知乎上のエスペランチスト,楊氏(Mingeo)による漢字化案)** 
     こちらはエスペラント語根と漢字を対応づけたCSVファイルです。
     """)
-    # サンプルファイルのパス
     file_path0 = './Appの运行に使用する各类文件/Mingeo先生版 世界语词根-汉字对应列表.csv'
-    # ファイルを読み込む
     with open(file_path0, "rb") as file:
         btn = st.download_button(
-                label="サンプルCSV２(エスペラント語根-漢字対応リスト＿Mingeo氏)ダウンロード",
-                data=file,
-                file_name="エスペラント語根-漢字対応リスト＿Mingeo氏.csv",
-                mime="text/csv"
-            )
+            label="サンプルCSV２(エスペラント語根-漢字対応リスト＿楊氏(Mingeo))ダウンロード",
+            data=file,
+            file_name="エスペラント語根-漢字対応リスト＿楊氏(Mingeo).csv",
+            mime="text/csv"
+        )
 
-
+    # サンプルCSV３
     st.markdown("""
-    **サンプルCSV３(エスペラント語根-漢字対応リスト)**  
+    **サンプルCSV３(エスペラント語根-漢字対応リスト)**
     こちらはエスペラント語根と漢字を対応づけたCSVファイルです。
     """)
-    # サンプルファイルのパス
     file_path0 = './Appの运行に使用する各类文件/世界语词根-汉字对应列表.csv'
-    # ファイルを読み込む
     with open(file_path0, "rb") as file:
         btn = st.download_button(
-                label="サンプルCSV３(エスペラント語根-漢字対応リスト)ダウンロード",
-                data=file,
-                file_name="エスペラント語根-漢字対応リスト.csv",
-                mime="text/csv"
-            )
+            label="サンプルCSV３(エスペラント語根-漢字対応リスト)ダウンロード",
+            data=file,
+            file_name="エスペラント語根-漢字対応リスト.csv",
+            mime="text/csv"
+        )
 
+    # サンプルJSON１
     st.markdown("""
-    **サンプルJSON１(エスペラント単語語根分解法ユーザー設定)**  
-    **用途**: エスペラント単語をどのように語根分解するかや、  
-    語尾に動詞活用語尾やその他品詞の語尾を加えた形を置換リストに加えるかなど、  
-    細かい設定をカスタムできます。サンプルJSONファイル内に詳しい説明が書いてあります。  
-    ( 例: `["am", "dflt", ["verbo_s1"]]` )""")
-    # サンプルファイルのパス
+    **サンプルJSON１(エスペラント単語語根分解法ユーザー設定)**
+    **用途**: エスペラント単語をどのように語根分解するかや、 
+    語尾(動詞活用語尾など)を追加した派生形をどのタイミングで置換に入れるか等、
+    細かく設定できます。サンプルファイル内のコメントを参照してください。
+    ( 例: `["am", "dflt", ["verbo_s1"]]` のように記述 )
+    """)
     json_file_path = './Appの运行に使用する各类文件/世界语单词词根分解方法の使用者自定义设置.json'
-    # JSONファイルを読み込んでダウンロードボタンを生成
     with open(json_file_path, "rb") as file_json:
         btn_json = st.download_button(
             label="サンプルJSON１(エスペラント単語語根分解法ユーザー設定)ダウンロード",
@@ -141,15 +228,14 @@ with st.expander("サンプルファイル一覧(ダウンロード用)"):
             mime="application/json"
         )
 
+    # サンプルJSON２
     st.markdown("""
-    ***サンプルJSON２(置換後文字列のユーザー設定)**  
-    **用途**: 特定の単語に対して、上記のようなカスタムの語根分解法に加えて、独自の漢字や文字列を割り当てる際に使用します。  
-    ( 基本的には上記のCSVファイルの編集と、語根分解法を設定するJSONファイルで事足りることが多いため、あまり推奨されない設定ファイルです。)  
-    サンプルJSON１と同じく、ファイル内に詳しい説明が書いてあります。
+    ***サンプルJSON２(置換後文字列のユーザー設定)**
+    **用途**: 特定の単語に対して、上記の語根分解法に加え、
+    独自の漢字や特殊表記を割り当てる際に使用します。
+    (基本的にはCSVファイルを編集し、語根分解法JSONを使うだけで十分なことが多い。)
     """)
-    # サンプルファイルのパス
     json_file_path2 = './Appの运行に使用する各类文件/替换后文字列(汉字)の使用者自定义设置(基本上完全不推荐).json'
-    # JSONファイルを読み込んでダウンロードボタンを生成
     with open(json_file_path2, "rb") as file_json:
         btn_json = st.download_button(
             label="サンプルJSON２(置換後文字列のユーザー設定)ダウンロード",
@@ -158,13 +244,11 @@ with st.expander("サンプルファイル一覧(ダウンロード用)"):
             mime="application/json"
         )
 
-    # サンプルエクセルファイルのダウンロードボタン
+    # サンプルExcel
     st.markdown("""
-    ***サンプルExcel１(エスペラント語根-日本語訳ルビ対応リスト(習得レベル付き))**  
-    **用途**: 翻訳ルビを追加するエスペラント語根をカスタムしたい場合、  
-    基本的に上記のCSVファイルを編集することになりますが、その際に役立つ
-    エスペラント語根の習得レベル(エスペラント日本語基本辞書を基にした)  
-    を併記したエクセルファイルです。
+    ***サンプルExcel１(エスペラント語根-日本語訳ルビ対応リスト(習得レベル付き))** 
+    **用途**: 翻訳ルビを追加するエスペラント語根をカスタムしたい場合などに役立ちます。
+    エスペラント日本語基本辞書を基にした「習得レベル」などを併記しています。
     """)
     with open('./Appの运行に使用する各类文件/エスペラント語根-日本語訳ルビ対応リスト(習得レベル付き).xlsx', "rb") as file:
         st.download_button(
@@ -175,7 +259,12 @@ with st.expander("サンプルファイル一覧(ダウンロード用)"):
         )
 
 st.write("---")
-# ユーザーに見せる選択肢（韓国語）→これを日本語表記に変更
+
+#=====================================================================
+# ユーザーに見せる出力形式選択 (例: HTML形式＿ルビ文字のサイズ調整等)
+# ここでの選択に応じて後段の output_format() が変化します。
+# (ルビを親文字にして訳をrtタグに入れるか、逆に漢字を親文字にしてエスペラントをrtにするかなど。)
+#=====================================================================
 options = {
     'HTML形式＿ルビ文字のサイズ調整': 'HTML格式_Ruby文字_大小调整',
     'HTML形式＿ルビ文字のサイズ調整（漢字置換）': 'HTML格式_Ruby文字_大小调整_汉字替换',
@@ -186,16 +275,11 @@ options = {
     '単純な置換': '替换后文字列のみ(仅)保留(简单替换)'
 }
 
-# ユーザーに見せる選択肢を日本語で表示
 display_options = list(options.keys())
-# Streamlit の selectbox を表示（韓国語部分→日本語へ）
 selected_display = st.selectbox('出力形式を選択:', display_options)
-
-# 内部で使用する値を取得
 format_type = options[selected_display]
 
-
-# 例示
+# 簡易サンプル: main_text_list と ruby_content_list の対応をループで作成
 main_text_list = ['Esperant','lingv', 'pac', 'amik', 'ec']
 ruby_content_list = ['世界语', '语言', '和平', '友', '性质']
 formatted_text = ''
@@ -203,86 +287,75 @@ for i, item in enumerate(main_text_list):
     formatted_text += output_format(item, ruby_content_list[i], format_type, char_widths_dict)
 
 st.write("---")
-# components.html のサイズを調整する
 
+# スタイル付きHTML(ルビヘッダ)を適用してサンプルテキストを表示
 st.markdown("**フォーマット済みテキスト⇓**")
 components.html(apply_ruby_html_header_and_footer(formatted_text, format_type), height=40, scrolling=False)
-
 st.write("---")
 
-
-
-
-# --- CSV アップロード or デフォルト使用 ---
+#=====================================================================
+# ステップ１: CSVファイルを準備 (アップロード or デフォルト)
+#=====================================================================
 st.header("ステップ１: CSVファイルを準備")
-st.markdown("""
-ここでは、エスペラント語根に対する翻訳情報などを載せた **CSV ファイル**を選択します。
-""")
+st.markdown(
+    """
+### エスペラント語根と翻訳情報(漢字)を含む **CSVファイル** を選択してください
+
+---
+    """
+)
+
+
+
 csv_choice = st.radio("CSVファイルをどうしますか？", ("アップロードする", "デフォルトを使用する"))
+csv_path_default = "./Appの运行に使用する各类文件/エスペラント語根-日本語訳ルビ対応リスト.csv"
 
-csv_path_default = "./Appの运行に使用する各类文件/エスペラント語根-日本語訳ルビ対応リスト.csv" 
-    # ↑デフォルトとして使いたいCSVファイルのパス(例)
-
-# CSV_data_imported の初期化
+# 後段で用いるDataFrame
 CSV_data_imported = None
 
 if csv_choice == "アップロードする":
-    st.write("任意のCSVファイルをアップロードしてください。ファイル形式はUTF-8を推奨します。")
+    st.write("任意のCSVファイルをアップロードしてください。(UTF-8推奨)")
     uploaded_file = st.file_uploader("CSVファイルを選択", type=['csv'])
     if uploaded_file is not None:
-        # アップロードされたCSVファイルからバイナリデータを読み取ってUTF-8文字列にデコード
         file_contents = uploaded_file.read().decode("utf-8")
-        
-        # 字上符形式（ĉ, ĝ, ĥ, ĵ, ŝ, ŭなど）に変換する関数
+        # エスペラント文字を字上符形式(ĉ等)に統一
         converted_text = convert_to_circumflex(file_contents)
-        
-        # StringIOを使って、変換後テキストをファイルっぽく扱う
         csv_buffer = StringIO(converted_text)
-        
-        # 変換後のファイルデータをpandasで読み込む
-        CSV_data_imported = pd.read_csv(csv_buffer, encoding="utf-8", usecols=[0, 1])# , usecols=[0, 1]によって、最初の2列だけを読み込む。　1列しか値が存在しない行について、2列目は自動的に欠損値 (NaN) として扱われ、以下の条件チェックの pd.notna(hanzi_or_meaning) や hanzi_or_meaning != "" に弾かれる。
-        
+        CSV_data_imported = pd.read_csv(csv_buffer, encoding="utf-8", usecols=[0, 1])
         st.success("CSVファイルがアップロードされました。")
     else:
         st.warning("CSVファイルがアップロードされていません。")
-        st.stop()  # CSVがアップロードされていない場合は処理を止める
+        st.stop()
 
 elif csv_choice == "デフォルトを使用する":
     try:
-        # 既定パスのCSVファイルを開いて文字列として読み込む
         with open(csv_path_default, 'r', encoding="utf-8") as file:
             text = file.read()
-        
-        # 字上符形式に変換
         converted_text = convert_to_circumflex(text)
-        
-        # 変換した文字列を StringIO に乗せる
         csv_buffer = StringIO(converted_text)
-        
-        # pandas で読み込み
-        CSV_data_imported = pd.read_csv(csv_buffer, encoding="utf-8", usecols=[0, 1])# , usecols=[0, 1]によって、最初の2列だけを読み込む。　1列しか値が存在しない行について、2列目は自動的に欠損値 (NaN) として扱われ、以下の条件チェックの pd.notna(hanzi_or_meaning) や hanzi_or_meaning != "" に弾かれる。
-        
+        CSV_data_imported = pd.read_csv(csv_buffer, encoding="utf-8", usecols=[0, 1])
         st.info("デフォルトのCSVを使用します。")
     except FileNotFoundError:
         st.error("デフォルトのCSVファイルが見つかりません。処理を中断します。")
         st.stop()
 
 st.write("CSVファイルの読み込みが完了しました。次に進みましょう。")
-
-# CSV がいずれにせよ CSV_data_imported に読み込まれた状態で次に進む
-# --------------------------------------------------------------------------------------
 st.write("---")
+
+#=====================================================================
+# ステップ2: JSONファイル(語根分解法など)を準備
+#=====================================================================
 st.header("ステップ2: JSONファイル(語根分解法など)を準備")
 st.markdown("""
-エスペラント単語の語根分解法や置換後文字列のカスタム設定を記述した JSON ファイルを読み込んで行きます。 
-JSONファイルの想定フォーマットについては、上記のサンプルをご参照ください。
+**エスペラント単語の語根分解法**や**独自の置換後文字列**を記述したJSONファイルを
+アップロード/またはデフォルトを使用できます。
+**サンプルJSON**をダウンロードし、そこに自分で追加・編集して取り込むイメージです。
 """)
 
+# 1. エスペラント単語の語根分解法(カスタム)を指定する JSON
 json_choice = st.radio("1. エスペラント単語の語根分解法を追加指定するJSONファイルをどうしますか？", ("アップロードする", "デフォルトを使用する"))
-
 json_path_default = "./Appの运行に使用する各类文件/世界语单词词根分解方法の使用者自定义设置.json"
-
-custom_stemming_setting_list = None  # JSON を格納
+custom_stemming_setting_list = None
 
 if json_choice == "アップロードする":
     uploaded_json = st.file_uploader("JSONファイルをアップロードしてください", type=['json'])
@@ -293,7 +366,6 @@ if json_choice == "アップロードする":
         st.warning("JSONファイルがアップロードされていません。")
         st.stop()
 elif json_choice == "デフォルトを使用する":
-    # デフォルト JSON を読む
     try:
         with open(json_path_default, "r", encoding="utf-8") as g:
             custom_stemming_setting_list = json.load(g)
@@ -302,11 +374,10 @@ elif json_choice == "デフォルトを使用する":
         st.error("デフォルトの JSON ファイルが見つかりません。")
         st.stop()
 
+# 2. 置換後文字列を追加指定する JSON
 json_choice2 = st.radio("置換後文字列を追加指定するJSONファイルをどうしますか？", ("アップロードする", "デフォルトを使用する"))
-
 json_path_default2 = "./Appの运行に使用する各类文件/替换后文字列(汉字)の使用者自定义设置(基本上完全不推荐).json"
-
-user_replacement_item_setting_list = None  # JSON を格納
+user_replacement_item_setting_list = None
 
 if json_choice2 == "アップロードする":
     uploaded_json = st.file_uploader("JSONファイル2をアップロードしてください", type=['json'])
@@ -317,7 +388,6 @@ if json_choice2 == "アップロードする":
         st.warning("JSONファイルがアップロードされていません。")
         st.stop()
 elif json_choice2 == "デフォルトを使用する":
-    # デフォルト JSON を読む
     try:
         with open(json_path_default2, "r", encoding="utf-8") as g:
             user_replacement_item_setting_list = json.load(g)
@@ -328,208 +398,268 @@ elif json_choice2 == "デフォルトを使用する":
 
 st.write("---")
 
-
-# 設定パラメータ (UI) - 高度な設定
+#=====================================================================
+# ステップ3: 高度な設定 (並列処理)
+#=====================================================================
 st.header("ステップ3: 高度な設定 (並列処理)")
-
 with st.expander("並列処理についての設定を開く"):
     st.write("""
-            ここでは、置換JSONファイルの生成時に使用する並列処理のプロセス数を決めます。  
-            """)
-    use_parallel = st.checkbox("並列処理を使う", value=False)
-    num_processes = st.number_input("同時プロセス数", min_value=2, max_value=6, value=5, step=1)
+    ここでは、置換JSONファイルの生成時に使用する並列処理のプロセス数を設定します。
+    テキストや語根数が膨大な場合、CPUコアを複数使うことで速度向上する可能性があります。
+    """)
 
-st.write("### 最終的な置換用JSONファイルの作成")
+use_parallel = st.checkbox("並列処理を使う", value=False)
+num_processes = st.number_input("同時プロセス数", min_value=2, max_value=6, value=5, step=1)
+
+st.write("### 最終的な置換用JSONファイルの作成 (ボタン)")
+
+# ここまでが「ステップ3」導入部。
+# 次のブロックで実際に「置換用JSONファイルを作成する」ボタンを押したら動く処理を書いています。
+#=====================================================================
+# 置換用JSONファイルを作成するボタン
+#=====================================================================
 if st.button("置換用JSONファイルを作成する"):
+    # ボタンが押されたときに実行されるブロック
+    # ここで大規模な置換リストを生成し、それをJSONとしてダウンロードできるようにします。
     with st.spinner("置換用JSONファイルを生成中... しばらくお待ちください。"):
-
+        #-------------------------------------------------------------
+        # (1) 大規模データ 'E_stem_with_Part_Of_Speech_list' を開く
+        #    (世界語の単語一覧+品詞情報などをJSONにしたファイル)
+        #    このファイルには、約4万～5万行ほどのエスペラント単語が入っており、
+        #    [ [語根, 品詞], [語根, 品詞], ... ] のような形を想定しています。
+        #-------------------------------------------------------------
         with open("./Appの运行に使用する各类文件/PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表(E_stem_with_Part_Of_Speech_list).json", "r", encoding="utf-8") as g:
             E_stem_with_Part_Of_Speech_list = json.load(g)
 
-        # 上の作業で抽出した、'PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表'(E_stem_with_Part_Of_Speech_list)を文字列(漢字)置換するための、置換リストを作成していく。
-        # "'PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表'(E_stem_with_Part_Of_Speech_list)を文字列(漢字)置換し終えたリスト"こそが最終的な置換リスト(replacements_final_list)の大元になる。
-        # '既に'/'(スラッシュ)によって完全に語根分解された状態の単語'が対象であれば、文字数の多い語根順に文字列(漢字)置換するだけで、理論上完璧な精度の置換ができるはず。
-        # ただし、その完璧な精度の置換のためにはあらかじめ"世界语全部单词列表_约44700个(原pejvo.txt)_utf8转换_第二部分以后重点修正_追加2024年版PEJVO更新项目_最终版202501.txt"から"世界语全部单词列表_约44700个(原pejvo.txt)_utf8转换_第二部分以后重点修正_追加2024年版PEJVO更新项目_最终版202501.txt＿から＿世界语全部词根_约11148个_202501.txt＿を抽出.ipynb"を用いてエスペラントの全語根を抽出しておく必要がある。
-
-        # 一旦辞書型を使う。(後で内容(value)を更新するため)
-        temporary_replacements_dict={}
+        #-------------------------------------------------------------
+        # (2) エスペラントの全語根(約11137個)を辞書型(temporary_replacements_dict)に格納
+        #     - この時点では「old=語根」「new=語根」「優先順位=len(語根)」で初期化
+        #     - 後ほどCSVを使って"new"を日本語訳/漢字訳などに置き換える
+        #-------------------------------------------------------------
+        temporary_replacements_dict = {}
         with open("./Appの运行に使用する各类文件/世界语全部词根_约11137个_202501.txt", 'r', encoding='utf-8') as file:
-            # "世界语全部词根_约11137个_202501.txt"は"世界语全部单词列表_约44700个(原pejvo.txt)_utf8转换_第二部分以后重点修正_追加2024年版PEJVO更新项目_最终版202501.txt"から"世界语全部单词列表_约44700个(原pejvo.txt)_utf8转换_第二部分以后重点修正_追加2024年版PEJVO更新项目_最终版202501.txt＿から＿世界语全部词根_约11137个_202501.txt＿を抽出.ipynb"を用いて抽出したエスペラントの全語根である。
             E_roots = file.readlines()
             for E_root in E_roots:
                 E_root = E_root.strip()
-                if not E_root.isdigit():# 混入していた数字の'10'と'7'を削除
-                    temporary_replacements_dict[E_root]=[E_root,len(E_root)]# 各エスペラント語根に対する'置換後の文字列'(この作業では元の置換対象の語根のまま)と、その置換優先順序として、'置換対象の語根の文字数'を設定。　置換優先順序の数字が大きい('置換対象の語根の文字数'が多い)ほど、先に置換されるようにする。
+                # 数字だけの行('10','7'など)は単語ではない可能性が高いため除外
+                if not E_root.isdigit():
+                    # [置換後文字列, 置換優先順位] という形で保持します。
+                    # 優先順位にはlen(E_root)を設定 (一般的に文字数の多い単語を先に置換するのが安全)
+                    temporary_replacements_dict[E_root] = [E_root, len(E_root)]
 
-        ##上の作業に引き続き、"'単語の語尾だけをカットした、完全に語根分解された状態の全単語リスト'(result)を漢字置換するための、漢字置換リスト"を作成していく。　
-        ##ここでは自分で作成したエスペラント語根の漢字化リストを反映させる。
-
-        # # 字上符形式で統一する処理もあったほうが良いか(202501)
-        # with open(input_csv_file, 'r', encoding='utf-8') as file:
-        #     text = file.read()
-        #     converted_text=convert_to_circumflex(text)# テキストを字上符形式（ĉ, ĝ, ĥ, ĵ, ŝ, ŭなど）に統一。
-        #     csv_buffer = StringIO(converted_text)# StringIOを使って、変換後テキストを「ファイル-like オブジェクト」にする
-
+        #-------------------------------------------------------------
+        # (3) CSV_data_imported を用いて
+        #     「エスペラント語根 → (漢字 or 日本語訳ルビ等)」を反映させる
+        #     - CSVの各行 [E_root, hanzi_or_meaning] を辞書に取り込み
+        #     - すでに用意してあるtemporary_replacements_dict内で "new"部分を更新するイメージ
+        #-------------------------------------------------------------
         for _, (E_root, hanzi_or_meaning) in CSV_data_imported.iterrows():
-            if pd.notna(E_root) and pd.notna(hanzi_or_meaning) and '#' not in E_root and (E_root != '') and (hanzi_or_meaning != ''):  # 条件を満たす行のみ処理
-                temporary_replacements_dict[E_root] = [output_format(E_root, hanzi_or_meaning, format_type, char_widths_dict),len(E_root)]
-                    
-        # 辞書型をリスト型に戻した上で、文字数順に並び替え。
-        # "'PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表'(E_stem_with_Part_Of_Speech_list)を文字列(漢字)置換するための、置換リスト"を置換優先順位の数字の大きさ順(ここでは文字数順)にソート。
+            # E_root と翻訳文字列がNaNではなく、かつ '#'で始まる(コメント)でもなく、空でないならOK
+            if pd.notna(E_root) and pd.notna(hanzi_or_meaning) \
+               and '#' not in E_root and (E_root != '') and (hanzi_or_meaning != ''):
+                # output_format()を介して(ルビ形式/漢字形式など)に変換
+                # 例えば "HTML格式" なら <ruby>Esperant<rt>エスペラント</rt></ruby> などになる
+                temporary_replacements_dict[E_root] = [
+                    output_format(E_root, hanzi_or_meaning, format_type, char_widths_dict),
+                    len(E_root)
+                ]
 
-        temporary_replacements_list_1=[]
-        for old,new in temporary_replacements_dict.items():
-            temporary_replacements_list_1.append((old,new[0],new[1]))
+        #-------------------------------------------------------------
+        # (4) 上記辞書(temporary_replacements_dict)をリスト化し、
+        #     文字数多い順(len(E_root)の大きい順)にソート
+        #     → 後でsafe_replace()を行う際に、文字数の大きいものを先に置換できるようにする
+        #-------------------------------------------------------------
+        temporary_replacements_list_1 = []
+        for old, new in temporary_replacements_dict.items():
+            temporary_replacements_list_1.append((old, new[0], new[1]))
         temporary_replacements_list_2 = sorted(temporary_replacements_list_1, key=lambda x: x[2], reverse=True)
 
-        # '置換リスト'の各置換に対してplaceholder(占位符)を追加し、リスト'temporary_replacements_list_final'として完成させる。
-        # placeholder法とは、既に置換を終えた文字列が後続の置換によって重複して置換されてしまうことを避けるために、その置換を終えた部分に一時的に無関係な文字列(placeholder)を置いておいて、
-        # 全ての置換が終わった後に、改めてその'無関係な文字列(placeholder)'から'目的の置換後文字列'に変換していく手法である。
-
-
-        temporary_replacements_list_final=[]
+        #-------------------------------------------------------------
+        # (5) placeholder(占位符)を使い、 (old→placeholder→new) の段階置換を安全に行うリストを作成
+        #     つまり、temporary_replacements_list_final = [ [old, new, placeholder], ... ] という形にし、
+        #     実際のsafe_replaceで衝突しないようにする。
+        #-------------------------------------------------------------
+        temporary_replacements_list_final = []
         for kk in range(len(temporary_replacements_list_2)):
-            temporary_replacements_list_final.append([temporary_replacements_list_2[kk][0],temporary_replacements_list_2[kk][1],imported_placeholders_for_global_replacement[kk]])
+            # imported_placeholders_for_global_replacement[kk] が衝突しないユニークな文字列
+            # ここで placeholders[kk] を割り当てることで多量の単語を区別できる
+            temporary_replacements_list_final.append([
+                temporary_replacements_list_2[kk][0],  # old(エスペラント語根)
+                temporary_replacements_list_2[kk][1],  # new(翻訳文字列)
+                imported_placeholders_for_global_replacement[kk] # placeholder
+            ])
 
-
-        # このセルの処理が全体を通して一番時間がかかる(数十秒)
-        # 'PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表'(E_stem_with_Part_Of_Speech_list)を実際にリスト'temporary_replacements_list_final'(一時的な置換リストの完成版)によって文字列(漢字)置換。　
-        # ここで作成される、"文字列(漢字)置換し終えたリスト(辞書型配列)"(pre_replacements_dict_1)こそが最終的な置換リスト(replacements_final_list)の大元になる。
-        # リスト'E_stem_with_Part_Of_Speech_list'までは情報の損失は殆どないはず。
-
+        #-------------------------------------------------------------
+        # (6) 'E_stem_with_Part_Of_Speech_list' を用いて、
+        #     先ほどの placeholder リストで実際に safe_replace する
+        #     - parallel_build_pre_replacements_dict: 行単位で並列に置換(大規模データ対応)
+        #-------------------------------------------------------------
         if use_parallel:
+            # 並列処理を使う場合
             pre_replacements_dict_1 = parallel_build_pre_replacements_dict(
-            E_stem_with_Part_Of_Speech_list,
-            temporary_replacements_list_final,
-            num_processes)  # CPUコア数に応じて設定。Streamlit Cloudだと2とかになるかもしれません)
-
+                E_stem_with_Part_Of_Speech_list,
+                temporary_replacements_list_final,
+                num_processes
+            )
         else:
-            progress_bar = st.progress(0)
-            progress_text = st.empty()  # 進行状況を文字で出すための領域
-            # ループ対象の総件数を取得
-            total_items = len(E_stem_with_Part_Of_Speech_list)
+            # 並列処理を使わない場合 (進捗バーを表示)
+            progress_bar = st.progress(0)   # Streamlitの進捗バー
+            progress_text = st.empty()      # 進捗状況を文字で表示
 
-            pre_replacements_dict_1={}
-            for i, j in enumerate(E_stem_with_Part_Of_Speech_list):# 20秒ほどかかる。　先にリストの要素を全て結合して、一つの文字列にしてから置換する方法を試しても(上述)、さほど高速化しなかった。
-                if len(j)==2:# (j[0]がエスペラント語根、j[1]が品詞。)
-                    if len(j[0])>=2:# 2文字以上のエスペラント語根のみが対象  3で良いのでは(202412)
+            total_items = len(E_stem_with_Part_Of_Speech_list)
+            pre_replacements_dict_1 = {}
+
+            for i, j in enumerate(E_stem_with_Part_Of_Speech_list):
+                # jが [語根, 品詞] の形かどうかチェック
+                if len(j) == 2:
+                    # 語根が2文字以上(あまりに短いとエラーなどの可能性があるため)
+                    if len(j[0]) >= 2:
+                        # もし既に辞書に存在したら、品詞情報を追記
                         if j[0] in pre_replacements_dict_1:
                             if j[1] not in pre_replacements_dict_1[j[0]][1]:
-                                pre_replacements_dict_1[j[0]] = [pre_replacements_dict_1[j[0]][0],pre_replacements_dict_1[j[0]][1] + ',' + j[1]]# 複数品詞の追加
+                                pre_replacements_dict_1[j[0]] = [
+                                    pre_replacements_dict_1[j[0]][0],
+                                    pre_replacements_dict_1[j[0]][1] + ',' + j[1]
+                                ]
                         else:
-                            pre_replacements_dict_1[j[0]]=[safe_replace(j[0], temporary_replacements_list_final),j[1]]# 辞書型配列の追加法
+                            # safe_replace()を実行し、(語根→placeholder→翻訳文字列)を適用
+                            pre_replacements_dict_1[j[0]] = [
+                                safe_replace(j[0], temporary_replacements_list_final),
+                                j[1]
+                            ]
+                # 進捗表示 (1000件ごとに更新)
                 if i % 1000 == 0:
-                    current_count = i + 1  # 1-based で何件目か
+                    current_count = i + 1
                     progress_value = int(current_count / total_items * 100)
-                    
-                    # プログレスバー更新
                     progress_bar.progress(progress_value)
-
-                    # テキスト表示を更新
-                    # 例: 「123/10000 件を処理中...」のように表示
                     progress_text.write(f"{current_count}/{total_items} 件を処理中...")
-            # ループ終了、進捗を100%にして完了表示
+
             progress_bar.progress(100)
             progress_text.write("一番時間がかかる処理が100% 完了しました。(あと3~4秒かかります。)")
 
-
-        keys_to_remove = ['domen', 'teren','posten']# 後でdomen/o,domen/a,domen/e等を追加する。　→確認済み(24/12)
+        # 例: 処理上、除外したいキーをここでpopする (domen, teren, posten等)
+        keys_to_remove = ['domen', 'teren','posten']
         for key in keys_to_remove:
-            pre_replacements_dict_1.pop(key, None)  # 'None' はキーが存在しない場合に返すデフォルト
+            pre_replacements_dict_1.pop(key, None)
 
-        # pre_replacements_dict_1→pre_replacements_dict_2  ("'PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表'(E_stem_with_Part_Of_Speech_list)をリスト'temporary_replacements_list_final'(一時的な置換リストの完成版)によって文字列(漢字)置換し終えたリスト(辞書型配列)"(pre_replacements_dict_1)を最終的な置換リスト(replacements_final_list)に成形していく。)
-        # pre_replacements_dict_1の'置換対象の単語'、'置換後の文字列'から"/"を抜く(HTML形式にしたい場合、"</rt></ruby>"は"/"を含むので要注意！)。
-        # 新たに置換優先順位を表す数字を追加し(置換する単語は'文字数×10000'、置換しない単語は'文字数×10000-3000')、辞書型配列pre_replacements_dict_2として保存。
-        pre_replacements_dict_2={}
-        for i,j in pre_replacements_dict_1.items():# (iが置換対象の単語、j[0]が置換後の文字列、j[1]が品詞。)
-            if i==j[0]:# 置換しない単語  # ⇓の右辺では、HTMLのルビ形式に含まれる'/'を避けながら'置換後の文字列'から"/"を抜く処理を行っている。HTML形式でなくてもしても大丈夫な処理なので、出力形式が'括弧(号)格式'や'替换后文字列のみ(仅)保留(简单替换)'であっても心配無用。
-                pre_replacements_dict_2[i.replace('/', '')]=[j[0].replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"),j[1],len(i.replace('/', ''))*10000-3000]# 置換しない単語は優先順位を下げる
+        #-------------------------------------------------------------
+        # (7) pre_replacements_dict_1 をさらに加工(優先順位調整等)していく
+        #     → pre_replacements_dict_2 にまとめる
+        #     「置換しない単語の場合は優先順位を下げる」「ルビの一部を除去/再設定」など
+        #-------------------------------------------------------------
+        pre_replacements_dict_2 = {}
+        for i,j in pre_replacements_dict_1.items():
+            # j[0] = safe_replace後の文字列, j[1] = 品詞
+            # i==j[0] の場合は「実質置換されなかった単語(変化なし)」とみなし、優先順位を低めに設定
+            if i==j[0]:
+                # 文字列末尾等に含まれる'/','</rt></ruby>'などを一部加工している
+                pre_replacements_dict_2[i.replace('/', '')] = [
+                    j[0].replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"),
+                    j[1],
+                    len(i.replace('/', ''))*10000 - 3000
+                ]
             else:
-                pre_replacements_dict_2[i.replace('/', '')]=[j[0].replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"),j[1],len(i.replace('/', ''))*10000]
+                # 置換後文字列は j[0] だが、一部'/'を取り除いて処理し、優先順位を(文字数*10000)に設定
+                pre_replacements_dict_2[i.replace('/', '')] = [
+                    j[0].replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"),
+                    j[1],
+                    len(i.replace('/', ''))*10000
+                ]
 
+        #-------------------------------------------------------------
+        # (8) ここから先は、AN, ON, 動詞語尾などの接頭辞/接尾辞を用いた
+        #     優先順位調整を大量に行う。
+        #
+        #     具体的には、辞書 pre_replacements_dict_2 をさらに書き換えたり、
+        #     新しいキー(=語尾を付けた形など)を追加して、より精度の高い置換を行えるようにしている。
+        #
+        #     コード量は多いですが、やっていることは
+        #       「(語根 + an)を名詞/形容詞とみなすか、それとも接尾辞an(員)とみなすか」
+        #       「(語根 + as)で動詞現在形にする場合の優先順位をどうするか」
+        #     などの細かいルール付けです。
+        #-------------------------------------------------------------
 
-
+        #------------------------------------------
+        # verb_suffix_2l_2 という辞書を作る:
+        #   verb_suffix_2l の各キー(例:'as')とその置換結果をsafe_replace()で更新
+        #   こうすることで "(語根)+(動詞接尾辞)" に対してルビなどを入れ込めるようにします。
+        #------------------------------------------
         verb_suffix_2l_2={}
         for original_verb_suffix,replaced_verb_suffix in verb_suffix_2l.items():
-            verb_suffix_2l_2[original_verb_suffix]=safe_replace(replaced_verb_suffix, temporary_replacements_list_final)# 202502追加(remove_redundant_ruby_if_identical)
+            # 例: 'as'→'as' のままのことが多いが、safe_replaceで更に別ルビを当てはめる可能性あり
+            verb_suffix_2l_2[original_verb_suffix] = safe_replace(replaced_verb_suffix, temporary_replacements_list_final)
 
-
-        # 一番の工夫ポイント(如何にして置換の優先順位を定め、置換精度を向上させるか。)
-        # 基本は単語の文字数が多い順に置換していくことになるが、
-        # 例えば、"置換対象の単語に接頭辞、接尾辞を追加し、単語の文字数を増やし、置換の優先順位を上げたものを、置換対象の単語として新たに追加する。"などが、置換精度を上げる方策として考えられる。
-        # しかし、いろいろ試した結果、动词に対してのみ活用語尾・接尾辞を追加し、置換対象の単語の文字数を増やす(置換の優先順位を上げる。)のが、ベストに近いことがわかった。
-
-        #  pre_replacements_dict_1→pre_replacements_dict_2→pre_replacements_dict_3  ("'PEJVO(世界语全部单词列表)'全部'について、词尾(a,i,u,e,o,n等)をcutし、comma(,)で隔てて词性と併せて记录した列表'(E_stem_with_Part_Of_Speech_list)をリスト'temporary_replacements_list_final'(一時的な置換リストの完成版)によって文字列(漢字)置換し終えたリスト(辞書型配列)"(pre_replacements_dict_1)を最終的な置換リスト(replacements_final_list)に成形していく。)
+        # 一番の工夫ポイント(以下、コメントはコード内にある通り):
+        #  置換の優先順位をどう定めるかで、置換の精度が大きく変わる。
+        #  文字数の多い単語を先に置換する、動詞の場合は活用語尾を付けた形を優先度高くするetc.
+        #
+        # pre_replacements_dict_1→pre_replacements_dict_2→pre_replacements_dict_3
+        # という流れで段階的に書き換え、最終的に "replacements_final_list" へまとめる方針。
 
         unchangeable_after_creation_list=[]
         AN_replacement = safe_replace('an', temporary_replacements_list_final)
         AN_treatment=[]
 
-        # pre_replacements_dict_3内での重複の検査をし、それを元に、以下のセルにおける修正がなされている。
         pre_replacements_dict_3={}
-        # 辞書をコピーする
-        pre_replacements_dict_2_copy = pre_replacements_dict_2.copy()# これがあるので、2回繰り返しするときは2個前のセルに戻ってpre_replacements_dict_2を作り直してからでないといけない。
-        for i,j in pre_replacements_dict_2_copy.items():# j[0]:置換後の文字列　j[1]:品詞 j[2]:置換優先順位
-            if i.endswith('an') and (AN_replacement in j[0]) and ("名词" in j[1]) and (i[:-2] in pre_replacements_dict_2_copy):# and ("形容词" in pre_replacements_dict_2_copy[i[:-2]][1]) 190個→121個
+        # 辞書をコピー (2回以上繰り返す時に改変が及ばないように)
+        pre_replacements_dict_2_copy = pre_replacements_dict_2.copy()
+
+        # (8-1) 例えば "xxxan" という語があり、それが名詞品詞("名词")なのに
+        #        中で "an"がルビとして置換されている...等、誤置換を防ぐための調整。
+        for i,j in pre_replacements_dict_2_copy.items(): # j[0]:置換後文字列, j[1]:品詞, j[2]:優先順位
+            if i.endswith('an') and (AN_replacement in j[0]) and ("名词" in j[1]) and (i[:-2] in pre_replacements_dict_2_copy):
+                # 形容詞語尾anと接尾辞anが衝突する場合などに対応
                 AN_treatment.append([i,j[0]])
-                pre_replacements_dict_2.pop(i, None)# これで形容詞語尾のanが接尾辞an(員)として、誤って置換されてしまうことは大体防げたハズ。　逆に、接尾辞an(員)が形容詞語尾のanとして、置換されない場合は、後述の局所置換によってその都度対処する。 (202501)
+                pre_replacements_dict_2.pop(i, None)
+                # そこへさらに "i+"o,"i+"a,"i+"e などの派生形を追加する処理
                 for k in ["o","a","e"]:
                     if not i+k in pre_replacements_dict_2_copy:
-                        pre_replacements_dict_3[i+k]=[j[0]+k,j[2]+len(k)*10000-2000]
-            elif (j[1] == "名词") and (len(i)<=6) and not(j[2]==60000 or j[2]==50000 or j[2]==40000 or j[2]==30000 or j[2]==20000):# 名词だけで、6文字以下で、置換しないやつ  # 置換ミスを防ぐための条件(20240614) altajo,aviso,malm,abes 固有名词対策  意味ふりがなのときは再検討
+                        pre_replacements_dict_3[i+k]=[j[0]+k, j[2]+len(k)*10000-2000]
+            elif (j[1] == "名词") and (len(i)<=6) and not(j[2] in [60000,50000,40000,30000,20000]):
+                # 名詞で6文字以下、かつ特定優先順位でないものを調整
                 for k in ["o"]:
                     if not i+k in pre_replacements_dict_2_copy:
-                        pre_replacements_dict_3[i+k]=[j[0]+k,j[2]+len(k)*10000-2000]# 実質8000 # 既存でないものは優先順位を大きく下げる→普通の品詞接尾辞が既存でないという言い方はおかしい気もするが。(202412)
-
-                    # elif j[0]+k != pre_replacements_dict_2_copy[i+k][0]:# ←本当はこちらの条件のほうが、既に存在してなおかつ語根分解も異なる単語を抽出して来れるため、より良い。
-                    else:# 既に存在するのであれば、元々の語根分解を優先し、何もしない。
-                        pass
-                        # ['buro', 'haloo', 'tauxro', 'unesko']の4個
+                        pre_replacements_dict_3[i+k]=[j[0]+k,j[2]+len(k)*10000-2000]
                 pre_replacements_dict_2.pop(i, None)
 
-
-        for i,j in pre_replacements_dict_2.items():# j[0]:置換後の文字列　j[1]:品詞 j[2]:置換優先順位
-            if j[2]==20000:# 2文字で置換するやつ# len(i)<=2:# 1文字は存在しないはずではある。
-                # 基本的に非动词の2文字の語根単体を以て置換することはない。　ただし、世界语全部单词_大约44700个(原pejvo.txt).txtに最初から含まれている2文字の語根は既に置換されており、実際の置換にも反映されることになる。
-                # 2文字の語根でも、动词については活用語尾を追加することで、自動的に+2文字以上できるので追加した。
+        # (8-2) 2文字語根の特別処理(例えば "am" "ar" など)
+        #       動詞の接尾辞(ag, ig等)を足した形の置換を優先させたいが、名詞や形容詞の場合はどうするか等
+        for i,j in pre_replacements_dict_2.items():
+            # j[2]が20000の場合は2文字語根の優先度っぽい
+            if j[2]==20000:
+                # 名詞の場合
                 if "名词" in j[1]:
-                    for k in ["o","on",'oj']:# "ojn"は不要か
+                    for k in ["o","on",'oj']:
                         if not i+k in pre_replacements_dict_2:
-                            pre_replacements_dict_3[' '+i+k]=[' '+j[0]+k,j[2]+(len(k)+1)*10000-5000]
-                        # elif j[0]+k != pre_replacements_dict_2[i+k][0]:# ←本当はこちらの条件のほうが、既に存在してなおかつ語根分解も異なる単語を抽出してこれるため、より良い。
-                        else:# 既に存在するのであれば、元々の語根分解を優先し、何もしない。
-                            pass
-                        # [['alo', '<ruby>alo<rt class="ruby-M_M_M">アロエ</rt></ruby>', '<ruby>al<rt class="ruby-S_S_S">~の方へ</rt></ruby>o'], ['duon', '<ruby>du<rt class="ruby-X_X_X">二</rt></ruby><ruby>on<rt class="ruby-M_M_M">分数</rt></ruby>', '<ruby>du<rt class="ruby-X_X_X">二</rt></ruby>on'], ['okon', '<ruby>ok<rt class="ruby-X_X_X">八</rt></ruby><ruby>on<rt class="ruby-M_M_M">分数</rt></ruby>', '<ruby>ok<rt class="ruby-X_X_X">八</rt></ruby>on']]
+                            pre_replacements_dict_3[' '+i+k] = [' '+j[0]+k, j[2] + (len(k)+1)*10000 - 5000]
+                # 形容詞の場合
                 if "形容词" in j[1]:
-                    for k in ["a","aj",'an']:# "ajn"は不要か  # sia pian ,'an 'も不要
-                        if not i+k in pre_replacements_dict_2:# if not なしのほうが良い
-                            pre_replacements_dict_3[' '+i+k]=[' '+j[0]+k,j[2]+(len(k)+1)*10000-5000]
-                        else:# if not なしのほうが良いというのは既に存在しようとしまいと新しく作った方の語根分解を優先するということ。if not を付けたとしても、elseの方でも同じ処理をするようにすれば何の問題もない。
-                            pre_replacements_dict_3[i+k]=[j[0]+k,j[2]+len(k)*10000-5000]# ここは空白なしにすることに(2412)
-                            unchangeable_after_creation_list.append(i+k)# 新しく定めた語根分解が後で更新されてしまわないように、unchangeable_after_creation_list に追加。
-                            # [['sia', 'sia', '<ruby>si<rt class="ruby-M_M_M">自分</rt></ruby>a'], ['eman', 'eman', '<ruby>em<rt class="ruby-M_M_M">傾向</rt></ruby>an'], ['lian', '<ruby>lian<rt class="ruby-S_S_S">[植]つる植物</rt></ruby>', '<ruby>li<rt class="ruby-X_X_X">彼</rt></ruby>an'], ['pian', '<ruby>pian<rt class="ruby-M_M_M">[楽]ピアノ</rt></ruby>', '<ruby>pi<rt class="ruby-S_S_S">信心深い</rt></ruby>an']]
-
+                    for k in ["a","aj",'an']:
+                        if not i+k in pre_replacements_dict_2:
+                            pre_replacements_dict_3[' '+i+k] = [' '+j[0]+k, j[2] + (len(k)+1)*10000 - 5000]
+                        else:
+                            pre_replacements_dict_3[i+k] = [j[0]+k, j[2] + len(k)*10000 - 5000]
+                            unchangeable_after_creation_list.append(i+k)
+                # 副詞の場合
                 if "副词" in j[1]:
                     for k in ["e"]:
-                        if not i+k in pre_replacements_dict_2:# if not なしのほうが良い
-                            pre_replacements_dict_3[' '+i+k]=[' '+j[0]+k,j[2]+(len(k)+1)*10000-5000]
+                        if not i+k in pre_replacements_dict_2:
+                            pre_replacements_dict_3[' '+i+k] = [' '+j[0]+k, j[2] + (len(k)+1)*10000 - 5000]
                         else:
-                            pre_replacements_dict_3[' '+i+k]=[' '+j[0]+k,j[2]+(len(k)+1)*10000-5000]
+                            pre_replacements_dict_3[' '+i+k] = [' '+j[0]+k, j[2] + (len(k)+1)*10000 - 5000]
+                # 動詞の場合(ここが複雑; 動詞活用語尾(as,is,os,etc)と組み合わせる)
                 if "动词" in j[1]:
                     for k1,k2 in verb_suffix_2l_2.items():
-                        if not i+k1 in pre_replacements_dict_2:# j[0]:置換後の文字列　j[1]:品詞 j[2]:置換優先順位
-                            pre_replacements_dict_3[i+k1]=[j[0]+k2,j[2]+len(k1)*10000-3000]
+                        if not i+k1 in pre_replacements_dict_2:
+                            pre_replacements_dict_3[i+k1] = [j[0]+k2, j[2] + len(k1)*10000 - 3000]
                         elif j[0]+k2 != pre_replacements_dict_2[i+k1][0]:
-                            pre_replacements_dict_3[i+k1]=[j[0]+k2,j[2]+len(k1)*10000-3000]# 新しく作った方の語根分解を優先する
-                            unchangeable_after_creation_list.append(i+k1)# 新しく定めた語根分解が後で更新されてしまわないように、unchangeable_after_creation_list に追加。
-                        # [['agat', '<ruby>agat<rt class="ruby-M_M_M">[鉱]メノウ</rt></ruby>', '<ruby>ag<rt class="ruby-S_S_S">行動する</rt></ruby><ruby>at<rt class="ruby-S_S_S">受動継続</rt></ruby>'], ['agit', '<ruby>agit<rt class="ruby-S_S_S">(を)扇動する</rt></ruby>', '<ruby>ag<rt class="ruby-S_S_S">行動する</rt></ruby><ruby>it<rt class="ruby-S_S_S">受動完了</rt></ruby>'], ['amas', '<ruby>amas<rt class="ruby-M_M_M">集積;大衆</rt></ruby>', '<ruby>am<rt class="ruby-S_S_S">愛する</rt></ruby><ruby>as<rt class="ruby-S_S_S">現在形</rt></ruby>'], ['iris', '<ruby>iris<rt class="ruby-M_M_M">[解]虹彩</rt></ruby>', '<ruby>ir<rt class="ruby-M_M_M">行く</rt></ruby><ruby>is<rt class="ruby-S_S_S">過去形</rt></ruby>'], ['irit', 'irit', '<ruby>ir<rt class="ruby-M_M_M">行く</rt></ruby><ruby>it<rt class="ruby-S_S_S">受動完了</rt></ruby>']]
-                    for k in ["u ","i ","u","i"]:# 动词の"u","i"単体の接尾辞は後ろが空白と決まっているので、2文字分増やすことができる。
+                            pre_replacements_dict_3[i+k1] = [j[0]+k2, j[2] + len(k1)*10000 - 3000]
+                            unchangeable_after_creation_list.append(i+k1)
+                    for k in ["u ","i ","u","i"]:
                         if not i+k in pre_replacements_dict_2:
-                            pre_replacements_dict_3[i+k]=[j[0]+k,j[2]+len(k)*10000-3000]
-                        elif j[0]+k != pre_replacements_dict_2[i+k][0]:
-                            pass
+                            pre_replacements_dict_3[i+k] = [j[0]+k, j[2] + len(k)*10000 - 3000]
                 continue
-
+            
             else:
                 if not i in unchangeable_after_creation_list:# unchangeable_after_creation_list に含まれる場合は除外。(上記で新しく定めた語根分解が更新されてしまわないようにするため。)
                     pre_replacements_dict_3[i]=[j[0],j[2]]# 品詞情報はここで用いるためにあった。以後は不要なので省いていく。
@@ -595,75 +725,77 @@ if st.button("置換用JSONファイルを作成する"):
                             elif j[0]+k != pre_replacements_dict_2[i+k][0]:
                                 pass
 
-
+        # (8-3) AN, ONリストを用いて更に新しい形を派生(XXXan/o, XXXon/aなど)
         for an in AN:
             if an[1].endswith("/an/"):
-                i2=an[1]
-                i3 = re.sub(r"/an/$", "", i2)# 正規表現を使わないと、etn/a/n　において、etnのnまで削られてしまった。　ここの$は末尾を表す正規表現なので要注意。
-                i4=i3+"/an/o"
-                i5=i3+"/an/a"
-                i6=i3+"/an/e"
-                i7=i3+"/a/n/"
-                pre_replacements_dict_3[i4.replace('/', '')]=[safe_replace(i4,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i4.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i5.replace('/', '')]=[safe_replace(i5,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i5.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i6.replace('/', '')]=[safe_replace(i6,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i6.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i7.replace('/', '')]=[safe_replace(i7,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i7.replace('/', ''))-1)*10000+3000]
-
+                i2 = an[1]
+                i3 = re.sub(r"/an/$", "", i2)
+                i4 = i3+"/an/o"
+                i5 = i3+"/an/a"
+                i6 = i3+"/an/e"
+                i7 = i3+"/a/n/"
+                pre_replacements_dict_3[i4.replace('/', '')] = [safe_replace(i4,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i4.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i5.replace('/', '')] = [safe_replace(i5,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i5.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i6.replace('/', '')] = [safe_replace(i6,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i6.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i7.replace('/', '')] = [safe_replace(i7,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i7.replace('/', ''))-1)*10000+3000]
             else:
-                i2=an[1]
+                # 末尾に"an"がつくパターンに準じた置換処理
+                i2 = an[1]
                 i2_2 = re.sub(r"an$", "", i2)
                 i3 = re.sub(r"an/$", "", i2_2)
-                i4=i3+"an/o"
-                i5=i3+"an/a"
-                i6=i3+"an/e"
-                i7=i3+"/a/n/"
-                pre_replacements_dict_3[i4.replace('/', '')]=[safe_replace(i4,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i4.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i5.replace('/', '')]=[safe_replace(i5,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i5.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i6.replace('/', '')]=[safe_replace(i6,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i6.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i7.replace('/', '')]=[safe_replace(i7,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i7.replace('/', ''))-1)*10000+3000]
+                i4 = i3+"an/o"
+                i5 = i3+"an/a"
+                i6 = i3+"an/e"
+                i7 = i3+"/a/n/"
+                pre_replacements_dict_3[i4.replace('/', '')] = [safe_replace(i4,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i4.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i5.replace('/', '')] = [safe_replace(i5,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i5.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i6.replace('/', '')] = [safe_replace(i6,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i6.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i7.replace('/', '')] = [safe_replace(i7,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i7.replace('/', ''))-1)*10000+3000]
 
         for on in ON:
             if on[1].endswith("/on/"):
-                i2=on[1]
-                i3 = re.sub(r"/on/$", "", i2)# 正規表現を使わないと、etn/a/n　において、etnのnまで削られてしまった。　ここの$は末尾を表す正規表現なので要注意。
-                i4=i3+"/on/o"
-                i5=i3+"/on/a"
-                i6=i3+"/on/e"
-                i7=i3+"/o/n/"
-                pre_replacements_dict_3[i4.replace('/', '')]=[safe_replace(i4,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i4.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i5.replace('/', '')]=[safe_replace(i5,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i5.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i6.replace('/', '')]=[safe_replace(i6,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i6.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i7.replace('/', '')]=[safe_replace(i7,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i7.replace('/', ''))-1)*10000+3000]
-
+                i2 = on[1]
+                i3 = re.sub(r"/on/$", "", i2)
+                i4 = i3+"/on/o"
+                i5 = i3+"/on/a"
+                i6 = i3+"/on/e"
+                i7 = i3+"/o/n/"
+                pre_replacements_dict_3[i4.replace('/', '')] = [safe_replace(i4,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i4.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i5.replace('/', '')] = [safe_replace(i5,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i5.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i6.replace('/', '')] = [safe_replace(i6,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i6.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i7.replace('/', '')] = [safe_replace(i7,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i7.replace('/', ''))-1)*10000+3000]
             else:
-                i2=on[1]
+                i2 = on[1]
                 i2_2 = re.sub(r"on$", "", i2)
                 i3 = re.sub(r"on/$", "", i2_2)
-                i4=i3+"on/o"
-                i5=i3+"on/a"
-                i6=i3+"on/e"
-                i7=i3+"/o/n/"
-                pre_replacements_dict_3[i4.replace('/', '')]=[safe_replace(i4,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i4.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i5.replace('/', '')]=[safe_replace(i5,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i5.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i6.replace('/', '')]=[safe_replace(i6,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i6.replace('/', ''))-1)*10000+3000]
-                pre_replacements_dict_3[i7.replace('/', '')]=[safe_replace(i7,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i7.replace('/', ''))-1)*10000+3000]
+                i4 = i3+"on/o"
+                i5 = i3+"on/a"
+                i6 = i3+"on/e"
+                i7 = i3+"/o/n/"
+                pre_replacements_dict_3[i4.replace('/', '')] = [safe_replace(i4,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i4.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i5.replace('/', '')] = [safe_replace(i5,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i5.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i6.replace('/', '')] = [safe_replace(i6,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i6.replace('/', ''))-1)*10000+3000]
+                pre_replacements_dict_3[i7.replace('/', '')] = [safe_replace(i7,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>"), (len(i7.replace('/', ''))-1)*10000+3000]
 
-        # 外部ファイルを読み込む形式に変えた。行われている処理は全く同じ。
-        # ★一番最初だけチェックして、説明用の項目を削除する。
-        # ★一番最初だけチェックして、説明用の項目を削除する
+        #-------------------------------------------------------------
+        # (9) custom_stemming_setting_list (ユーザーが定義した語根分解法) を適用
+        #     - 例: ["am", "dflt", ["verbo_s1"]] → "am"に動詞活用語尾を付けた形を挿入
+        #     - もし優先順位を-1等にしていたら、置換対象から除外(pop)する
+        #-------------------------------------------------------------
         if len(custom_stemming_setting_list) > 0:
+            # 最初の要素が3つでなければ「説明用の行」とみなし削除
             if len(custom_stemming_setting_list[0]) != 3:
-                # 最初のリストの要素の数が3つでなければ、これを説明用の項目であると判断して削除する。
                 custom_stemming_setting_list.pop(0)
-                
+
         for i in custom_stemming_setting_list:
             if len(i)==3:
                 try:
                     esperanto_Word_before_replacement = i[0].replace('/', '')
-                    if i[1]=="dflt":
-                        replacement_priority_by_length=len(esperanto_Word_before_replacement)*10000
-                    elif i[1] in allowed_values:# 202502追加 置換優先順位(i[1])が-1に設定されている場合、設定されている接尾辞付きの派生形も含めて置換対象から除外する。
-                        pre_replacements_dict_3.pop(esperanto_Word_before_replacement, None)# メインのキーをpop
+                    if i[1] == "dflt":
+                        replacement_priority_by_length = len(esperanto_Word_before_replacement)*10000
+                    elif i[1] in allowed_values:
+                        # 置換優先順位(i[1])が-1等の場合、該当単語を除去
+                        pre_replacements_dict_3.pop(esperanto_Word_before_replacement, None)
                         if "ne" in i[2]:
                             pre_replacements_dict_3.pop(esperanto_Word_before_replacement, None)
                             i[2].remove("ne")
@@ -678,203 +810,295 @@ if st.button("置換用JSONファイルを作成する"):
                                 pre_replacements_dict_3.pop(removed_E_word, None)
                             i[2].remove("verbo_s2")
                         if len(i[2]) >= 1:
-                            for j in i[2]:
-                                j2 = j.replace('/', '')
-                                removed_E_word = esperanto_Word_before_replacement + j2
+                            for j2_item in i[2]:
+                                j2_item2 = j2_item.replace('/', '')
+                                removed_E_word = esperanto_Word_before_replacement + j2_item2
                                 pre_replacements_dict_3.pop(removed_E_word, None)
                         continue
-                        
-                    elif isinstance(i[1], int) or (isinstance(i[1], str) and i[1].isdigit()):  # 整数または整数に変換可能な文字列
-                        replacement_priority_by_length = int(i[1])  # 文字列の場合は整数に変換
-                        
-                    Replaced_String = safe_replace(i[0],temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>")
+                    elif isinstance(i[1], int) or (isinstance(i[1], str) and i[1].isdigit()):
+                        # 整数(もしくは整数文字列)であれば優先順位として使用
+                        replacement_priority_by_length = int(i[1])
+
+                    # ここで "i[0]"をsafe_replaceしてルビ等を入れる
+                    Replaced_String = safe_replace(i[0], temporary_replacements_list_final)\
+                                      .replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>")
+
                     if "ne" in i[2]:
-                        pre_replacements_dict_3[esperanto_Word_before_replacement]=[Replaced_String, replacement_priority_by_length]
-                        i[2].remove("ne")#　これがあるので、再実行には要注意!(おそらく問題ない)
+                        pre_replacements_dict_3[esperanto_Word_before_replacement] = [Replaced_String, replacement_priority_by_length]
+                        i[2].remove("ne")
                     if "verbo_s1" in i[2]:
                         for k1,k2 in verb_suffix_2l_2.items():
-                            pre_replacements_dict_3[esperanto_Word_before_replacement + k1]=[Replaced_String+k2, replacement_priority_by_length+len(k1)*10000]
+                            pre_replacements_dict_3[esperanto_Word_before_replacement + k1] = [Replaced_String + k2, replacement_priority_by_length+len(k1)*10000]
                         i[2].remove("verbo_s1")
                     if "verbo_s2" in i[2]:
                         for k in ["u ","i ","u","i"]:
-                            pre_replacements_dict_3[esperanto_Word_before_replacement + k]=[Replaced_String+k, replacement_priority_by_length+len(k)*10000]
+                            pre_replacements_dict_3[esperanto_Word_before_replacement + k] = [Replaced_String + k, replacement_priority_by_length+len(k)*10000]
                         i[2].remove("verbo_s2")
                     if len(i[2])>=1:
-                        for j in i[2]:
-                            j2 = j.replace('/', '')
-                            j3 = safe_replace(j,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>")
-                            pre_replacements_dict_3[esperanto_Word_before_replacement + j2]=[Replaced_String + j3, replacement_priority_by_length+len(j2)*10000]
+                        for j_item in i[2]:
+                            j2 = j_item.replace('/', '')
+                            j3 = safe_replace(j_item,temporary_replacements_list_final)\
+                                  .replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>")
+                            pre_replacements_dict_3[esperanto_Word_before_replacement + j2] = [Replaced_String + j3, replacement_priority_by_length+len(j2)*10000]
                     else:
-                        pre_replacements_dict_3[esperanto_Word_before_replacement]=[Replaced_String, replacement_priority_by_length]
+                        pre_replacements_dict_3[esperanto_Word_before_replacement] = [Replaced_String, replacement_priority_by_length]
                 except:
                     continue
 
-
-        # ★一番最初だけチェックして、説明用の項目を削除する
+        #-------------------------------------------------------------
+        # (10) user_replacement_item_setting_list を適用
+        #      こちらはさらに細かい「特定の単語→独自の漢字表記」の設定など
+        #-------------------------------------------------------------
         if len(user_replacement_item_setting_list) > 0:
+            # 同様に最初が4つでなければ説明行とみなし削除
             if len(user_replacement_item_setting_list[0]) != 4:
-                # 最初のリストの要素の数が4つでなければ、これを説明用の項目であると判断して削除する。
                 user_replacement_item_setting_list.pop(0)
 
         for i in user_replacement_item_setting_list:
             if len(i)==4:
-                try:   
+                try:
+                    # i[0]のように "xxx/yyy" といった複数rootが書かれている場合、"/"でsplit
                     esperanto_Roots_before_replacement = i[0].strip('/').split('/')
                     replaced_roots = i[3].strip('/').split('/')
                     if len(esperanto_Roots_before_replacement) == len(replaced_roots):
+                        # 同じ数だけsplitされているならOK
                         Replaced_String = ""
                         for kk in range(len(esperanto_Roots_before_replacement)):
-                            Replaced_String += output_format(esperanto_Roots_before_replacement[kk],replaced_roots[kk], format_type, char_widths_dict)
-                        
+                            Replaced_String += output_format(
+                                esperanto_Roots_before_replacement[kk],
+                                replaced_roots[kk],
+                                format_type,
+                                char_widths_dict
+                            )
                         esperanto_Word_before_replacement = i[0].replace('/', '')
                         if i[1]=="dflt":
-                            replacement_priority_by_length=len(esperanto_Word_before_replacement)*10000
-                        elif isinstance(i[1], int) or (isinstance(i[1], str) and i[1].isdigit()):  # 整数または整数に変換可能な文字列
-                            replacement_priority_by_length = int(i[1])  # 文字列の場合は整数に変換
+                            replacement_priority_by_length = len(esperanto_Word_before_replacement)*10000
+                        elif isinstance(i[1], int) or (isinstance(i[1], str) and i[1].isdigit()):
+                            replacement_priority_by_length = int(i[1])
+
                         if "ne" in i[2]:
-                            pre_replacements_dict_3[esperanto_Word_before_replacement]=[Replaced_String, replacement_priority_by_length]
-                            i[2].remove("ne")#　これがあるので、再実行には要注意!(おそらく問題ない)
+                            pre_replacements_dict_3[esperanto_Word_before_replacement] = [Replaced_String, replacement_priority_by_length]
+                            i[2].remove("ne")
                         if "verbo_s1" in i[2]:
                             for k1,k2 in verb_suffix_2l_2.items():
-                                pre_replacements_dict_3[esperanto_Word_before_replacement + k1]=[Replaced_String+k2, replacement_priority_by_length+len(k1)*10000]
+                                pre_replacements_dict_3[esperanto_Word_before_replacement + k1] = [Replaced_String + k2, replacement_priority_by_length+len(k1)*10000]
                             i[2].remove("verbo_s1")
                         if "verbo_s2" in i[2]:
                             for k in ["u ","i ","u","i"]:
-                                pre_replacements_dict_3[esperanto_Word_before_replacement + k]=[Replaced_String+k, replacement_priority_by_length+len(k)*10000]
+                                pre_replacements_dict_3[esperanto_Word_before_replacement + k] = [Replaced_String + k, replacement_priority_by_length+len(k)*10000]
                             i[2].remove("verbo_s2")
                         if len(i[2])>=1:
-                            for j in i[2]:
-                                j2 = j.replace('/', '')
-                                j3 = safe_replace(j,temporary_replacements_list_final).replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>")
-                                pre_replacements_dict_3[esperanto_Word_before_replacement + j2]=[Replaced_String + j3, replacement_priority_by_length+len(j2)*10000]
+                            for j_item in i[2]:
+                                j2 = j_item.replace('/', '')
+                                j3 = safe_replace(j_item, temporary_replacements_list_final)\
+                                      .replace("</rt></ruby>","%%%").replace('/', '').replace("%%%","</rt></ruby>")
+                                pre_replacements_dict_3[esperanto_Word_before_replacement + j2] = [Replaced_String + j3, replacement_priority_by_length+len(j2)*10000]
                         else:
-                            pre_replacements_dict_3[esperanto_Word_before_replacement]=[Replaced_String, replacement_priority_by_length]
+                            pre_replacements_dict_3[esperanto_Word_before_replacement] = [Replaced_String, replacement_priority_by_length]
                 except:
                     continue
 
-        # 辞書型をリスト型に戻す。置換優先順位の数字の大きさ順にソートするため。
-        pre_replacements_list_1=[]
-        for old,new in  pre_replacements_dict_3.items():
+        #-------------------------------------------------------------
+        # (11) pre_replacements_dict_3 をリスト化して、優先順位の大きい順にソート
+        #      →「最終的に大域置換に使う置換リスト(replacements_final_list)」の元を作る
+        #-------------------------------------------------------------
+        pre_replacements_list_1 = []
+        for old,new in pre_replacements_dict_3.items():
+            # new[0] = 実際の置換後文字列, new[1] = 優先順位(int)
             if isinstance(new[1], int):
                 pre_replacements_list_1.append((old,new[0],new[1]))
 
-        pre_replacements_list_2= sorted(pre_replacements_list_1, key=lambda x: x[2], reverse=True)# (置換優先順位の数字の大きさ順にソート!)
+        pre_replacements_list_2 = sorted(pre_replacements_list_1, key=lambda x: x[2], reverse=True)
 
-        # 'エスペラント語根'、'置換後文字列'、'placeholder(占位符)'の順に並べ、最終的な文字列(漢字)置換に用いる"replacements"リストの元を作成。
-        pre_replacements_list_3=[]
+        # remove_redundant_ruby_if_identical() で親文字とルビ文字が同じときの二重ルビを除去
+        pre_replacements_list_3 = []
         for kk in range(len(pre_replacements_list_2)):
-            if len(pre_replacements_list_2[kk][0])>=3:# 3文字以上でいいのではないか(202412)  la対策として考案された。
-                pre_replacements_list_3.append([pre_replacements_list_2[kk][0],remove_redundant_ruby_if_identical(pre_replacements_list_2[kk][1]),imported_placeholders_for_global_replacement[kk]])# 202502追加(remove_redundant_ruby_if_identical) '大文字'、'小文字'、'文頭だけ大文字'の3パターンに増えてしまう直前に発動。
+            if len(pre_replacements_list_2[kk][0])>=3:  # 3文字以上のみを対象
+                # remove_redundant_ruby_if_identical: "<ruby>xxx<rt>xxx</rt></ruby>" をただの "xxx" にする
+                processed_new = remove_redundant_ruby_if_identical(pre_replacements_list_2[kk][1])
+                pre_replacements_list_3.append([
+                    pre_replacements_list_2[kk][0],
+                    processed_new,
+                    imported_placeholders_for_global_replacement[kk]
+                ])
 
-        # '大文字'、'小文字'、'文頭だけ大文字'の3パターンに対応。
-        pre_replacements_list_4=[]
+        # (12) 大文字・小文字・文頭だけ大文字(capitalize) の3パターンをそれぞれ生成
+        #      → エスペラント文中は先頭大文字などのケースもあるため
+        pre_replacements_list_4 = []
         if format_type in ('HTML格式_Ruby文字_大小调整','HTML格式_Ruby文字_大小调整_汉字替换','HTML格式','HTML格式_汉字替换'):
+            # ルビ(HTML)系の場合、大文字化すると <ruby>や<rt>部分があるため、
+            # capitalize_ruby_and_rt() を呼んで親文字だけ大文字化するなどの処理を行う。
             for old,new,place_holder in pre_replacements_list_3:
                 pre_replacements_list_4.append((old,new,place_holder))
-                pre_replacements_list_4.append((old.upper(),new.upper(),place_holder[:-1]+'up$'))# placeholderを少し変更する必要がある。
-                if old[0]==' ':# 置換対象の文字列の語頭が空白の場合にも対応　語頭に空白を入れている置換対象は殆どない。二文字語根のみ。
-                    pre_replacements_list_4.append((old[0] + old[1:].capitalize() ,new[0] + capitalize_ruby_and_rt(new[1:]),place_holder[:-1]+'cap$'))
+                pre_replacements_list_4.append((old.upper(), new.upper(), place_holder[:-1]+'up$'))
+                if old.startswith(' '):
+                    pre_replacements_list_4.append((old[0] + old[1:].capitalize(), new[0] + capitalize_ruby_and_rt(new[1:]), place_holder[:-1]+'cap$'))
                 else:
-                    pre_replacements_list_4.append((old.capitalize(),capitalize_ruby_and_rt(new),place_holder[:-1]+'cap$'))
+                    pre_replacements_list_4.append((old.capitalize(), capitalize_ruby_and_rt(new), place_holder[:-1]+'cap$'))
+
         elif format_type in ('括弧(号)格式', '括弧(号)格式_汉字替换'):
+            # 括弧形式の場合はrubyタグではなく単なる文字列なので
+            # capitalize() で単純に先頭大文字化
             for old,new,place_holder in pre_replacements_list_3:
                 pre_replacements_list_4.append((old,new,place_holder))
-                pre_replacements_list_4.append((old.upper(),new.upper(),place_holder[:-1]+'up$'))
+                pre_replacements_list_4.append((old.upper(), new.upper(), place_holder[:-1]+'up$'))
                 if old[0]==' ':
-                    pre_replacements_list_4.append((old[0] + old[1:].capitalize(),new[0] + new[1:].capitalize(),place_holder[:-1]+'cap$'))
+                    pre_replacements_list_4.append((old[0] + old[1:].capitalize(), new[0] + new[1:].capitalize(), place_holder[:-1]+'cap$'))
                 else:
-                    pre_replacements_list_4.append((old.capitalize(),new.capitalize(),place_holder[:-1]+'cap$'))
+                    pre_replacements_list_4.append((old.capitalize(), new.capitalize(), place_holder[:-1]+'cap$'))
+
         elif format_type in ('替换后文字列のみ(仅)保留(简单替换)'):
+            # 単純置換の場合
             for old,new,place_holder in pre_replacements_list_3:
                 pre_replacements_list_4.append((old,new,place_holder))
-                pre_replacements_list_4.append((old.upper(),new.upper(),place_holder[:-1]+'up$'))
+                pre_replacements_list_4.append((old.upper(), new.upper(), place_holder[:-1]+'up$'))
                 if old[0]==' ':
-                    pre_replacements_list_4.append((old[0] + old[1:].capitalize() ,new[0] + new[1:].capitalize() ,place_holder[:-1]+'cap$'))
+                    pre_replacements_list_4.append((old[0] + old[1:].capitalize(), new[0] + new[1:].capitalize(), place_holder[:-1]+'cap$'))
                 else:
-                    pre_replacements_list_4.append((old.capitalize(),new.capitalize(),place_holder[:-1]+'cap$'))
+                    pre_replacements_list_4.append((old.capitalize(), new.capitalize(), place_holder[:-1]+'cap$'))
 
-
-        replacements_final_list=[]
+        # (13) ここでいよいよ "replacements_final_list" を構築
+        #      (old, new, placeholder) のタプルをまとめる。
+        replacements_final_list = []
         for old, new, place_holder in pre_replacements_list_4:
-            # 新しい変数で空白を追加した内容を保持
             modified_placeholder = place_holder
+            # 置換対象が空白で始/終している場合、その空白をplaceholderに反映
             if old.startswith(' '):
-                modified_placeholder = ' ' + modified_placeholder  # 置換対象の文字列の語頭が空白の場合、placeholderの語頭にも空白を追加する。(空白の競合を防ぐため。)
+                modified_placeholder = ' ' + modified_placeholder
                 if not new.startswith(' '):
                     new = ' ' + new
             if old.endswith(' '):
-                modified_placeholder = modified_placeholder + ' '  # 置換対象の文字列の語末が空白の場合、placeholderの語末にも空白を追加する。(空白の競合を防ぐため。)
+                modified_placeholder = modified_placeholder + ' '
                 if not new.endswith(' '):
                     new = new + ' '
-            # 結果をリストに追加
             replacements_final_list.append((old, new, modified_placeholder))
 
-
-
-
-        replacements_list_for_suffix_2char_roots=[]
+        #-------------------------------------------------------------
+        # (14) 二文字词根替换用のリスト(全域とは別)を生成
+        #      suffix_2char_roots / prefix_2char_roots / standalone_2char_roots など
+        #-------------------------------------------------------------
+        replacements_list_for_suffix_2char_roots = []
         for i in range(len(suffix_2char_roots)):
-            replaced_suffix = remove_redundant_ruby_if_identical(safe_replace(suffix_2char_roots[i],temporary_replacements_list_final))# 202502追加(remove_redundant_ruby_if_identical)
-            replacements_list_for_suffix_2char_roots.append(["$"+suffix_2char_roots[i],"$"+replaced_suffix,"$"+imported_placeholders_for_2char_replacement[i]])
-            replacements_list_for_suffix_2char_roots.append(["$"+suffix_2char_roots[i].upper(),"$"+replaced_suffix.upper(),"$"+imported_placeholders_for_2char_replacement[i][:-1]+'up$'])
-            replacements_list_for_suffix_2char_roots.append(["$"+suffix_2char_roots[i].capitalize(),"$"+capitalize_ruby_and_rt(replaced_suffix),"$"+imported_placeholders_for_2char_replacement[i][:-1]+'cap$'])
+            replaced_suffix = remove_redundant_ruby_if_identical(safe_replace(suffix_2char_roots[i], temporary_replacements_list_final))
+            replacements_list_for_suffix_2char_roots.append([
+                "$"+suffix_2char_roots[i],
+                "$"+replaced_suffix,
+                "$"+imported_placeholders_for_2char_replacement[i]
+            ])
+            replacements_list_for_suffix_2char_roots.append([
+                "$"+suffix_2char_roots[i].upper(),
+                "$"+replaced_suffix.upper(),
+                "$"+imported_placeholders_for_2char_replacement[i][:-1]+'up$'
+            ])
+            replacements_list_for_suffix_2char_roots.append([
+                "$"+suffix_2char_roots[i].capitalize(),
+                "$"+capitalize_ruby_and_rt(replaced_suffix),
+                "$"+imported_placeholders_for_2char_replacement[i][:-1]+'cap$'
+            ])
 
-        replacements_list_for_prefix_2char_roots=[]
+        replacements_list_for_prefix_2char_roots = []
         for i in range(len(prefix_2char_roots)):
-            replaced_prefix = remove_redundant_ruby_if_identical(safe_replace(prefix_2char_roots[i],temporary_replacements_list_final))
-            replacements_list_for_prefix_2char_roots.append([prefix_2char_roots[i]+"$",replaced_prefix+"$",imported_placeholders_for_2char_replacement[i+1000]+"$"])
-            replacements_list_for_prefix_2char_roots.append([prefix_2char_roots[i].upper()+"$",replaced_prefix.upper()+"$",imported_placeholders_for_2char_replacement[i+1000][:-1]+'up$'+"$"])
-            replacements_list_for_prefix_2char_roots.append([prefix_2char_roots[i].capitalize()+"$",capitalize_ruby_and_rt(replaced_prefix)+"$",imported_placeholders_for_2char_replacement[i+1000][:-1]+'cap$'+"$"])
+            replaced_prefix = remove_redundant_ruby_if_identical(safe_replace(prefix_2char_roots[i], temporary_replacements_list_final))
+            replacements_list_for_prefix_2char_roots.append([
+                prefix_2char_roots[i]+"$",
+                replaced_prefix+"$",
+                imported_placeholders_for_2char_replacement[i+1000]+"$"
+            ])
+            replacements_list_for_prefix_2char_roots.append([
+                prefix_2char_roots[i].upper()+"$",
+                replaced_prefix.upper()+"$",
+                imported_placeholders_for_2char_replacement[i+1000][:-1]+'up$'+"$"
+            ])
+            replacements_list_for_prefix_2char_roots.append([
+                prefix_2char_roots[i].capitalize()+"$",
+                capitalize_ruby_and_rt(replaced_prefix)+"$",
+                imported_placeholders_for_2char_replacement[i+1000][:-1]+'cap$'+"$"
+            ])
 
-        replacements_list_for_standalone_2char_roots=[]
+        replacements_list_for_standalone_2char_roots = []
         for i in range(len(standalone_2char_roots)):
-            replaced_standalone = remove_redundant_ruby_if_identical(safe_replace(standalone_2char_roots[i],temporary_replacements_list_final))
-            replacements_list_for_standalone_2char_roots.append([" "+standalone_2char_roots[i]+" "," "+replaced_standalone+" "," "+imported_placeholders_for_2char_replacement[i+2000]+" "])
-            replacements_list_for_standalone_2char_roots.append([" "+standalone_2char_roots[i].upper()+" "," "+replaced_standalone.upper()+" "," "+imported_placeholders_for_2char_replacement[i+2000][:-1]+'up$'+" "])
-            replacements_list_for_standalone_2char_roots.append([" "+standalone_2char_roots[i].capitalize()+" "," "+capitalize_ruby_and_rt(replaced_standalone)+" "," "+imported_placeholders_for_2char_replacement[i+2000][:-1]+'cap$'+" "])
+            replaced_standalone = remove_redundant_ruby_if_identical(safe_replace(standalone_2char_roots[i], temporary_replacements_list_final))
+            replacements_list_for_standalone_2char_roots.append([
+                " "+standalone_2char_roots[i]+" ",
+                " "+replaced_standalone+" ",
+                " "+imported_placeholders_for_2char_replacement[i+2000]+" "
+            ])
+            replacements_list_for_standalone_2char_roots.append([
+                " "+standalone_2char_roots[i].upper()+" ",
+                " "+replaced_standalone.upper()+" ",
+                " "+imported_placeholders_for_2char_replacement[i+2000][:-1]+'up$'+" "
+            ])
+            replacements_list_for_standalone_2char_roots.append([
+                " "+standalone_2char_roots[i].capitalize()+" ",
+                " "+capitalize_ruby_and_rt(replaced_standalone)+" ",
+                " "+imported_placeholders_for_2char_replacement[i+2000][:-1]+'cap$'+" "
+            ])
 
-        replacements_list_for_2char=replacements_list_for_standalone_2char_roots+replacements_list_for_suffix_2char_roots+replacements_list_for_prefix_2char_roots
+        replacements_list_for_2char = (
+            replacements_list_for_standalone_2char_roots
+            + replacements_list_for_suffix_2char_roots
+            + replacements_list_for_prefix_2char_roots
+        )
 
-
-        # 局所的な文字列(漢字)置換には、最初の"CSV_data_imported"のみを使って作成した置換リストを用いる。
-
-        pre_replacements_list_for_localized_string_1=[]
+        #-------------------------------------------------------------
+        # (15) 局所的な文字列(漢字)置換用のリストを作成
+        #      これは "%"や"@"で囲まれた部分だけ置換したいときに使う想定。
+        #      CSV_data_imported にある(語根,訳)だけを対象とする。
+        #-------------------------------------------------------------
+        pre_replacements_list_for_localized_string_1 = []
         for _, (E_root, hanzi_or_meaning) in CSV_data_imported.iterrows():
-            if pd.notna(E_root) and pd.notna(hanzi_or_meaning) and '#' not in E_root and (E_root != '') and (hanzi_or_meaning != ''):  # 条件を満たす行のみ処理
-                if E_root == hanzi_or_meaning:# 202502追加
+            if pd.notna(E_root) and pd.notna(hanzi_or_meaning) and '#' not in E_root and (E_root != '') and (hanzi_or_meaning != ''):
+                if E_root == hanzi_or_meaning:
+                    # E_rootと翻訳が同じ場合(稀だが)でも、一応3パターン(大文字/先頭大文字含む)追加
                     pre_replacements_list_for_localized_string_1.append([E_root, hanzi_or_meaning, len(E_root)])
                     pre_replacements_list_for_localized_string_1.append([E_root.upper(), hanzi_or_meaning.upper(), len(E_root)])
                     pre_replacements_list_for_localized_string_1.append([E_root.capitalize(), hanzi_or_meaning.capitalize(), len(E_root)])
                 else:
-                    pre_replacements_list_for_localized_string_1.append([E_root,output_format(E_root, hanzi_or_meaning, format_type, char_widths_dict),len(E_root)])
-                    pre_replacements_list_for_localized_string_1.append([E_root.upper(),output_format(E_root.upper(), hanzi_or_meaning.upper(), format_type, char_widths_dict),len(E_root)])
-                    pre_replacements_list_for_localized_string_1.append([E_root.capitalize(),output_format(E_root.capitalize(), hanzi_or_meaning.capitalize(), format_type, char_widths_dict),len(E_root)])
-
+                    # それ以外は output_format() を通す
+                    pre_replacements_list_for_localized_string_1.append([
+                        E_root,
+                        output_format(E_root, hanzi_or_meaning, format_type, char_widths_dict),
+                        len(E_root)
+                    ])
+                    pre_replacements_list_for_localized_string_1.append([
+                        E_root.upper(),
+                        output_format(E_root.upper(), hanzi_or_meaning.upper(), format_type, char_widths_dict),
+                        len(E_root)
+                    ])
+                    pre_replacements_list_for_localized_string_1.append([
+                        E_root.capitalize(),
+                        output_format(E_root.capitalize(), hanzi_or_meaning.capitalize(), format_type, char_widths_dict),
+                        len(E_root)
+                    ])
+        # 長い語根を先に置換できるようソート(文字数多い順)
         pre_replacements_list_for_localized_string_2 = sorted(pre_replacements_list_for_localized_string_1, key=lambda x: x[2], reverse=True)
 
-        replacements_list_for_localized_string=[]
+        replacements_list_for_localized_string = []
         for kk in range(len(pre_replacements_list_for_localized_string_2)):
-            replacements_list_for_localized_string.append([pre_replacements_list_for_localized_string_2[kk][0],pre_replacements_list_for_localized_string_2[kk][1],imported_placeholders_for_local_replacement[kk]])
+            replacements_list_for_localized_string.append([
+                pre_replacements_list_for_localized_string_2[kk][0],
+                pre_replacements_list_for_localized_string_2[kk][1],
+                imported_placeholders_for_local_replacement[kk]
+            ])
 
-
-            
-        # --- 結合する処理 ---
+        #=============================================================
+        # (16) 最後に3種類のリストを JSON 化してダウンロードできる形にする
+        #   - 全域替换用のリスト(列表)型配列 → replacements_final_list
+        #   - 二文字词根替换用のリスト(列表)型配列 → replacements_list_for_2char
+        #   - 局部文字替换用のリスト(列表)型配列 → replacements_list_for_localized_string
+        #=============================================================
         combined_data = {}
-
-        # キー名はお好みに変更可
         combined_data["全域替换用のリスト(列表)型配列(replacements_final_list)"] = replacements_final_list
         combined_data["二文字词根替换用のリスト(列表)型配列(replacements_list_for_2char)"] = replacements_list_for_2char
         combined_data["局部文字替换用のリスト(列表)型配列(replacements_list_for_localized_string)"] = replacements_list_for_localized_string
 
-
-        # JSON文字列に変換
+        # JSON文字列にダンプし、ダウンロードボタンを生成
         download_data = json.dumps(combined_data, ensure_ascii=False, indent=2)
-
         st.success("置換リストの生成が完了しました！")
-        # --- ダウンロードボタン ---
+
         st.download_button(
             label="Download 最终的な替换用リスト(列表)(合并3个JSON文件)",
-            data=download_data,          
+            data=download_data,
             file_name="最终的な替换用リスト(列表)(合并3个JSON文件).json",
             mime='application/json'
         )

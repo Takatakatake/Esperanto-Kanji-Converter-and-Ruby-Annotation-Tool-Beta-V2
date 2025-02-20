@@ -1,6 +1,7 @@
-"""
-esp_text_replacement_module.py
 
+## esp_text_replacement_module.py(3つ目)
+
+"""
 このモジュールは「エスペラント文章の文字列(漢字)置換」を包括的に扱うツール集です。
 主な機能：
 1. エスペラント独自の文字形式（ĉ, ĝなど）への変換 → convert_to_circumflex
