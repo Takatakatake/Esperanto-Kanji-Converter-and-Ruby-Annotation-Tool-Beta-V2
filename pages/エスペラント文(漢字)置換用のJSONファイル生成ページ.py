@@ -1,6 +1,6 @@
 ##  エスペラント文(漢字)置換用のJSONファイル生成ページ.py(2つ目)
 #############################
-# page.py (Streamlit特有のpagesフォルダに入れるコード)
+# エスペラント文(漢字)置換用のJSONファイル生成ページ.py (Streamlit特有のpagesフォルダに入れるコード)
 # 
 # 【概要】
 #  このページでは、「エスペラント文の漢字(日本語)置換」で使う
@@ -20,13 +20,13 @@
 #  - 最終的に「全域替换用のリスト」「局部文字替換用のリスト」「二文字词根替换用リスト」の3つを合并
 #  - ダウンロードボタンで JSONファイルとして取得
 #############################
-# page.py (Streamlit特有のpagesフォルダに入れるコード)
+# エスペラント文(漢字)置換用のJSONファイル生成ページ.py (Streamlit特有のpagesフォルダに入れるコード)
 # こちらは「置換用JSONファイルを自分で作成したい」場合に利用するツールです。
 # main.pyで使う「置換用JSON(合并3個JSONファイル)」を生成するための処理がまとまっています。
 
 
 
-# page.py (Streamlit特有のpagesフォルダに入れるコード)
+# エスペラント文(漢字)置換用のJSONファイル生成ページ.py (Streamlit特有のpagesフォルダに入れるコード)
 # こちらは「置換用JSONファイルを自分で作成したい」場合に利用するツールです。
 # (main.pyで使う「合并3個JSONファイル」形式の置換用JSONを生成するための処理をまとめています)
 
@@ -408,8 +408,8 @@ with st.expander("並列処理についての設定を開く"):
     テキストや語根数が膨大な場合、CPUコアを複数使うことで速度向上する可能性があります。
     """)
 
-use_parallel = st.checkbox("並列処理を使う", value=False)
-num_processes = st.number_input("同時プロセス数", min_value=2, max_value=6, value=5, step=1)
+    use_parallel = st.checkbox("並列処理を使う", value=False)
+    num_processes = st.number_input("同時プロセス数", min_value=2, max_value=6, value=5, step=1)
 
 st.write("### 最終的な置換用JSONファイルの作成 (ボタン)")
 
